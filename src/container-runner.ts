@@ -266,6 +266,11 @@ function buildContainerArgs(
     args.push('-e', `MEMU_API_KEY=${process.env.MEMU_API_KEY}`);
   }
 
+  // Forward Parallel AI API key for web research MCP servers
+  if (process.env.PARALLEL_API_KEY) {
+    args.push('-e', `PARALLEL_API_KEY=${process.env.PARALLEL_API_KEY}`);
+  }
+
   // Credential injection strategy depends on auth mode.
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {

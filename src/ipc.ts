@@ -81,9 +81,15 @@ export function startIpcWatcher(deps: IpcDeps): void {
                   isMain ||
                   (targetGroup && targetGroup.folder === sourceGroup)
                 ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+                  // Route through bot pool if sender specified and Telegram
+                  if (data.sender && data.chatJid.startsWith('tg:')) {
+                    const { sendPoolMessage } = await import('./channels/telegram.js');
+                    await sendPoolMessage(data.chatJid, data.text, data.sender, sourceGroup);
+                  } else {
+                    await deps.sendMessage(data.chatJid, data.text);
+                  }
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
+                    { chatJid: data.chatJid, sourceGroup, sender: data.sender },
                     'IPC message sent',
                   );
                 } else {

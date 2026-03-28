@@ -451,7 +451,9 @@ async function runQuery(
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
         'mcp__nanoclaw__*',
-        'mcp__ollama__*'
+        'mcp__ollama__*',
+        'mcp__parallel-search__*',
+        'mcp__parallel-task__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -471,6 +473,18 @@ async function runQuery(
           command: 'node',
           args: [path.join(path.dirname(mcpServerPath), 'ollama-mcp-stdio.js')],
         },
+        ...(process.env.PARALLEL_API_KEY ? {
+          'parallel-search': {
+            type: 'http',
+            url: 'https://search-mcp.parallel.ai/mcp',
+            headers: { 'Authorization': `Bearer ${process.env.PARALLEL_API_KEY}` },
+          },
+          'parallel-task': {
+            type: 'http',
+            url: 'https://task-mcp.parallel.ai/mcp',
+            headers: { 'Authorization': `Bearer ${process.env.PARALLEL_API_KEY}` },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
