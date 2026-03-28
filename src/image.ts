@@ -21,7 +21,11 @@ export async function downloadAndSavePhoto(
   botToken: string,
   photoSizes: Array<{ file_id: string; width?: number; height?: number }>,
   groupFolder: string,
-): Promise<{ hostPath: string; containerPath: string; mimeType: string } | null> {
+): Promise<{
+  hostPath: string;
+  containerPath: string;
+  mimeType: string;
+} | null> {
   try {
     const photo = photoSizes[photoSizes.length - 1];
     if (!photo) return null;
@@ -62,7 +66,12 @@ export async function downloadAndSavePhoto(
     const containerPath = `/workspace/group/media/${filename}`;
 
     logger.info(
-      { originalSize: buffer.length, resizedSize: resized.length, hostPath, containerPath },
+      {
+        originalSize: buffer.length,
+        resizedSize: resized.length,
+        hostPath,
+        containerPath,
+      },
       'Saved image attachment',
     );
 

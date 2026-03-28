@@ -67,6 +67,9 @@ Each session starts fresh. Files are memory. Read them, update them, persist thr
 - Run bash commands in your sandbox
 - Schedule tasks to run later or on a recurring basis
 - Send messages back to the chat
+- **Extract video frames** with `bash /workspace/skills/frame.sh <video> --time HH:MM:SS --out /tmp/frame.jpg`
+- **Control tmux sessions** via SSH — send keystrokes, scrape pane output (see tmux skill docs in `/workspace/skills/`)
+- **Check weather** — `curl "wttr.in/Houston?format=3"` (no API key needed). Use `?format=j1` for JSON
 
 ## Communication
 
@@ -103,12 +106,31 @@ When you learn something important:
 - Split files larger than 500 lines into folders
 - Keep an index in your memory for the files you create
 
+### Anti-Amnesia Rules
+Compaction is recency-biased — it keeps recent context and drops older material. These rules prevent knowledge loss:
+1. **New device or service discovered** → immediately add to a `devices.md` or `tools.md` file
+2. **New project started** → add to memory files before the session ends
+3. **Key decision made** → write it down now, not later
+4. **After multi-day sprints** → do a "tunnel check": scan the last 7 days of daily files for anything that didn't get promoted to long-term memory
+5. **Credentials or IPs changed** → update tools/config files immediately, don't rely on session memory
+
 ### Memory Flush Before Compaction
 When your context is about to be compacted (you'll know because the system sends `/compact`), take a moment to write any important unrecorded observations to your workspace files. Things worth flushing:
 - Decisions Garrett made that aren't in any file yet
 - Project status changes you observed during the session
 - New preferences or patterns you noticed
 - Anything that would be lost if you started fresh right now
+
+### Session Summary on End
+When a long or significant session is wrapping up, write a summary to `memory/YYYY-MM-DD-topic.md` covering:
+- What was discussed/built
+- Key decisions and their rationale
+- Open items or next steps
+- Anything surprising or non-obvious
+Keep it concise — 10-20 lines max. This becomes searchable history for future sessions.
+
+### Audit Trail
+Log sensitive operations (SSH commands, file deletions, credential access, relay triggers) by appending to `memory/audit.log` with timestamp and context. Format: `YYYY-MM-DDTHH:MM:SS action: description`
 
 ## Media
 

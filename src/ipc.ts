@@ -83,8 +83,14 @@ export function startIpcWatcher(deps: IpcDeps): void {
                 ) {
                   // Route through bot pool if sender specified and Telegram
                   if (data.sender && data.chatJid.startsWith('tg:')) {
-                    const { sendPoolMessage } = await import('./channels/telegram.js');
-                    await sendPoolMessage(data.chatJid, data.text, data.sender, sourceGroup);
+                    const { sendPoolMessage } =
+                      await import('./channels/telegram.js');
+                    await sendPoolMessage(
+                      data.chatJid,
+                      data.text,
+                      data.sender,
+                      sourceGroup,
+                    );
                   } else {
                     await deps.sendMessage(data.chatJid, data.text);
                   }
@@ -447,9 +453,9 @@ export async function processTaskIpc(
           );
           break;
         }
-        // Defense in depth: agent cannot set isMain via IPC.                                                                                                                                    
-        // Preserve isMain from the existing registration so IPC config                                                                                                                          
-        // updates (e.g. adding additionalMounts) don't strip the flag.                                                                                                                          
+        // Defense in depth: agent cannot set isMain via IPC.
+        // Preserve isMain from the existing registration so IPC config
+        // updates (e.g. adding additionalMounts) don't strip the flag.
         const existingGroup = registeredGroups[data.jid];
         deps.registerGroup(data.jid, {
           name: data.name,

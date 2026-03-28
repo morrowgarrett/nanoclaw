@@ -46,21 +46,24 @@ export async function transcribeVoice(
 
     // Convert OGG to 16kHz mono WAV for whisper.cpp
     await execFileAsync('ffmpeg', [
-      '-i', tmpOgg,
-      '-ar', '16000',
-      '-ac', '1',
-      '-c:a', 'pcm_s16le',
+      '-i',
+      tmpOgg,
+      '-ar',
+      '16000',
+      '-ac',
+      '1',
+      '-c:a',
+      'pcm_s16le',
       '-y',
       tmpWav,
     ]);
 
     // Run whisper.cpp locally
-    const { stdout } = await execFileAsync(WHISPER_BIN, [
-      '-m', WHISPER_MODEL,
-      '-f', tmpWav,
-      '--no-timestamps',
-      '-nt',
-    ], { timeout: 60_000 });
+    const { stdout } = await execFileAsync(
+      WHISPER_BIN,
+      ['-m', WHISPER_MODEL, '-f', tmpWav, '--no-timestamps', '-nt'],
+      { timeout: 60_000 },
+    );
 
     const text = stdout.trim();
 
@@ -83,7 +86,15 @@ export async function transcribeVoice(
     return null;
   } finally {
     // Clean up temp files
-    try { fs.unlinkSync(tmpOgg); } catch { /* ignore */ }
-    try { fs.unlinkSync(tmpWav); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(tmpOgg);
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.unlinkSync(tmpWav);
+    } catch {
+      /* ignore */
+    }
   }
 }

@@ -49,7 +49,10 @@ export async function downloadDocument(
     );
 
     // For PDFs, include the file path so the container agent can read it
-    return { hostPath: filePath, content: `[Document saved: ${safeName}, ${buffer.length} bytes]` };
+    return {
+      hostPath: filePath,
+      content: `[Document saved: ${safeName}, ${buffer.length} bytes]`,
+    };
   } catch (err) {
     logger.error(
       { err: err instanceof Error ? err.message : String(err) },
