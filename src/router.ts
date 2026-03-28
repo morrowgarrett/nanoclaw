@@ -16,7 +16,17 @@ export function formatMessages(
 ): string {
   const lines = messages.map((m) => {
     const displayTime = formatLocalTime(m.timestamp, timezone);
-    return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
+    let msgXml = `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}`;
+
+    // Attach image data inline so the agent-runner can build multimodal content blocks
+    if (m.attachments && m.attachments.length > 0) {
+      for (const att of m.attachments) {
+        msgXml += `\n<image mime="${escapeXml(att.mimeType)}">${att.base64}</image>`;
+      }
+    }
+
+    msgXml += '</message>';
+    return msgXml;
   });
 
   const header = `<context timezone="${escapeXml(timezone)}" />\n`;

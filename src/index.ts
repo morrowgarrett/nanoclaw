@@ -58,7 +58,7 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, ImageAttachment, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -68,6 +68,33 @@ let lastTimestamp = '';
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
 let lastAgentTimestamp: Record<string, string> = {};
+
+// In-memory cache for image attachments — keyed by message ID.
+// Attachments are dropped by SQLite (no column), so we hold them here
+// until they're consumed by formatMessages. Entries expire after 5 minutes.
+const attachmentCache = new Map<string, { attachments: ImageAttachment[]; expires: number }>();
+const ATTACHMENT_TTL_MS = 5 * 60 * 1000;
+
+function cacheAttachments(msgId: string, attachments: ImageAttachment[]): void {
+  attachmentCache.set(msgId, { attachments, expires: Date.now() + ATTACHMENT_TTL_MS });
+}
+
+function reattachCachedImages(messages: NewMessage[]): void {
+  const now = Date.now();
+  for (const m of messages) {
+    const cached = attachmentCache.get(m.id);
+    if (cached) {
+      if (now < cached.expires) {
+        m.attachments = cached.attachments;
+      }
+      attachmentCache.delete(m.id);
+    }
+  }
+  // Prune expired entries
+  for (const [key, val] of attachmentCache) {
+    if (now >= val.expires) attachmentCache.delete(key);
+  }
+}
 let messageLoopRunning = false;
 
 const channels: Channel[] = [];
@@ -200,6 +227,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
+  reattachCachedImages(missedMessages);
   const prompt = formatMessages(missedMessages, TIMEZONE);
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
@@ -438,6 +466,7 @@ async function startMessageLoop(): Promise<void> {
           );
           const messagesToSend =
             allPending.length > 0 ? allPending : groupMessages;
+          reattachCachedImages(messagesToSend);
           const formatted = formatMessages(messagesToSend, TIMEZONE);
 
           if (queue.sendMessage(chatJid, formatted)) {
@@ -583,6 +612,10 @@ async function main(): Promise<void> {
           }
           return;
         }
+      }
+      // Cache image attachments before they're dropped by SQLite
+      if (msg.attachments && msg.attachments.length > 0) {
+        cacheAttachments(msg.id, msg.attachments);
       }
       storeMessage(msg);
     },
