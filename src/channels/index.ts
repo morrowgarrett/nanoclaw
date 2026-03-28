@@ -5,6 +5,9 @@
 
 // gmail
 
+// mattermost
+import './mattermost.js';
+
 // slack
 
 // telegram
