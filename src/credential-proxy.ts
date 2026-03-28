@@ -11,6 +11,9 @@
  *             subsequent requests carry the temp key which is valid as-is.
  */
 import { createServer, Server } from 'http';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { request as httpsRequest } from 'https';
 import { request as httpRequest, RequestOptions } from 'http';
 
@@ -21,6 +24,23 @@ export type AuthMode = 'api-key' | 'oauth';
 
 export interface ProxyConfig {
   authMode: AuthMode;
+}
+
+/**
+ * Read the current OAuth access token from Claude Code's credentials file.
+ * Claude Code keeps this file up-to-date with refreshed tokens.
+ * Returns null if the file doesn't exist or can't be parsed.
+ */
+function readClaudeCredentialsToken(): string | null {
+  try {
+    const credPath = join(homedir(), '.claude', '.credentials.json');
+    const data = JSON.parse(readFileSync(credPath, 'utf-8'));
+    const token = data?.claudeAiOauth?.accessToken;
+    if (typeof token === 'string' && token.length > 0) return token;
+  } catch {
+    // File missing or malformed — fall through
+  }
+  return null;
 }
 
 export function startCredentialProxy(
@@ -35,8 +55,14 @@ export function startCredentialProxy(
   ]);
 
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
-  const oauthToken =
+
+  // For OAuth mode: prefer .env token if set, otherwise read fresh from
+  // Claude's credentials file (which gets auto-refreshed by Claude Code).
+  const envOauthToken =
     secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+  function getOauthToken(): string | undefined {
+    return envOauthToken || readClaudeCredentialsToken() || undefined;
+  }
 
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
@@ -73,8 +99,9 @@ export function startCredentialProxy(
           // x-api-key only, so they pass through without token injection.
           if (headers['authorization']) {
             delete headers['authorization'];
-            if (oauthToken) {
-              headers['authorization'] = `Bearer ${oauthToken}`;
+            const token = getOauthToken();
+            if (token) {
+              headers['authorization'] = `Bearer ${token}`;
             }
           }
         }

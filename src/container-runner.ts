@@ -123,6 +123,16 @@ function buildVolumeMounts(
     '.claude',
   );
   fs.mkdirSync(groupSessionsDir, { recursive: true });
+
+  // Sync host Claude credentials into the container's .claude/ dir
+  // so Claude Code can authenticate directly (OAuth subscription flow).
+  const homedir = process.env.HOME || '/home/' + process.env.USER;
+  const hostCredentials = path.join(homedir, '.claude', '.credentials.json');
+  if (fs.existsSync(hostCredentials)) {
+    const destCredentials = path.join(groupSessionsDir, '.credentials.json');
+    fs.copyFileSync(hostCredentials, destCredentials);
+  }
+
   const settingsFile = path.join(groupSessionsDir, 'settings.json');
   if (!fs.existsSync(settingsFile)) {
     fs.writeFileSync(
@@ -209,6 +219,16 @@ function buildVolumeMounts(
     readonly: false,
   });
 
+  // Mount SSH credentials for remote machine access (read-only)
+  const sshConfigDir = path.join(process.cwd(), 'data', 'ssh-config');
+  if (fs.existsSync(sshConfigDir)) {
+    mounts.push({
+      hostPath: sshConfigDir,
+      containerPath: '/home/node/.ssh',
+      readonly: true,
+    });
+  }
+
   // Additional mounts validated against external allowlist (tamper-proof from containers)
   if (group.containerConfig?.additionalMounts) {
     const validatedMounts = validateAdditionalMounts(
@@ -228,25 +248,29 @@ function buildContainerArgs(
 ): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
+  // memU sidecar is reachable via the host's localhost port.
+  // Using host.docker.internal so containers on the default bridge can reach it.
+  args.push('-e', 'MEMU_SIDECAR_URL=http://host.docker.internal:8100');
+
   // Pass host timezone so container's local time matches the user's
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Route API traffic through the credential proxy (containers never see real secrets)
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
+  // Pass memU sidecar API key for knowledge graph access
+  if (process.env.MEMU_API_KEY) {
+    args.push('-e', `MEMU_API_KEY=${process.env.MEMU_API_KEY}`);
+  }
 
-  // Mirror the host's auth method with a placeholder value.
-  // API key mode: SDK sends x-api-key, proxy replaces with real key.
-  // OAuth mode:   SDK exchanges placeholder token for temp API key,
-  //               proxy injects real OAuth token on that exchange request.
+  // Credential injection strategy depends on auth mode.
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
+    // API key mode: route through credential proxy.
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    args.push('-e', 'CLAUDE_CODE_OAUTH_TOKEN=placeholder');
   }
+  // OAuth mode: credentials synced from host .claude/ directory at container spawn.
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
