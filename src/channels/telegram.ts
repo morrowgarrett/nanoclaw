@@ -3,7 +3,7 @@ import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
-import { downloadAndProcessPhoto } from '../image.js';
+import { downloadAndSavePhoto } from '../image.js';
 import { downloadDocument } from '../pdf.js';
 import { transcribeVoice } from '../transcription.js';
 import { logger } from '../logger.js';
@@ -95,9 +95,15 @@ export async function sendPoolMessage(
     try {
       await poolApis[idx].setMyName(sender);
       await new Promise((r) => setTimeout(r, 2000));
-      logger.info({ sender, groupFolder, poolIndex: idx }, 'Assigned and renamed pool bot');
+      logger.info(
+        { sender, groupFolder, poolIndex: idx },
+        'Assigned and renamed pool bot',
+      );
     } catch (err) {
-      logger.warn({ sender, err }, 'Failed to rename pool bot (sending anyway)');
+      logger.warn(
+        { sender, err },
+        'Failed to rename pool bot (sending anyway)',
+      );
     }
   }
 
@@ -112,7 +118,10 @@ export async function sendPoolMessage(
         await api.sendMessage(numericId, text.slice(i, i + MAX_LENGTH));
       }
     }
-    logger.info({ chatId, sender, poolIndex: idx, length: text.length }, 'Pool message sent');
+    logger.info(
+      { chatId, sender, poolIndex: idx, length: text.length },
+      'Pool message sent',
+    );
   } catch (err) {
     logger.error({ chatId, sender, err }, 'Failed to send pool message');
   }
@@ -291,30 +300,34 @@ export class TelegramChannel implements Channel {
 
       const isGroup =
         ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
 
-      // Download and process the photo
-      const attachments: ImageAttachment[] = [];
-      const result = await downloadAndProcessPhoto(
+      // Download photo and save to group workspace (agent reads via Read tool)
+      const result = await downloadAndSavePhoto(
         this.bot!.api,
         this.botToken,
         ctx.message.photo,
+        group.folder,
       );
-      if (result) {
-        attachments.push({ base64: result.base64, mimeType: result.mimeType });
-      }
+
+      const content = result
+        ? `[media attached: ${result.containerPath} (${result.mimeType})]${caption}`
+        : `[Photo — download failed]${caption}`;
 
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
         sender: ctx.from?.id?.toString() || '',
         sender_name: senderName,
-        content: attachments.length > 0
-          ? `[Photo]${caption}`
-          : `[Photo — download failed]${caption}`,
+        content,
         timestamp,
         is_from_me: false,
-        attachments: attachments.length > 0 ? attachments : undefined,
       });
     });
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
@@ -325,16 +338,29 @@ export class TelegramChannel implements Channel {
 
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
-        ctx.from?.first_name || ctx.from?.username || ctx.from?.id?.toString() || 'Unknown';
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
 
       const voice = ctx.message.voice;
       let content = '[Voice message]';
 
       if (voice?.file_id) {
         const text = await transcribeVoice(
-          this.bot!.api, this.botToken, voice.file_id, voice.duration || 0,
+          this.bot!.api,
+          this.botToken,
+          voice.file_id,
+          voice.duration || 0,
         );
         if (text) {
           content = `[Voice message transcription]: ${text}`;
@@ -361,16 +387,30 @@ export class TelegramChannel implements Channel {
       const name = doc?.file_name || 'file';
       const timestamp = new Date(ctx.message.date * 1000).toISOString();
       const senderName =
-        ctx.from?.first_name || ctx.from?.username || ctx.from?.id?.toString() || 'Unknown';
+        ctx.from?.first_name ||
+        ctx.from?.username ||
+        ctx.from?.id?.toString() ||
+        'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
 
       // Download the document so the agent can read it
       let content = `[Document: ${name}]${caption}`;
       if (doc?.file_id) {
         const result = await downloadDocument(
-          this.bot!.api, this.botToken, doc.file_id, name, group.folder,
+          this.bot!.api,
+          this.botToken,
+          doc.file_id,
+          name,
+          group.folder,
         );
         if (result) {
           content = `${result.content} (path: ${result.hostPath})${caption}`;

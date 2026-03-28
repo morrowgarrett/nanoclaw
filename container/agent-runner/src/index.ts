@@ -49,13 +49,9 @@ interface SessionsIndex {
   entries: SessionEntry[];
 }
 
-type ContentBlock =
-  | { type: 'text'; text: string }
-  | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } };
-
 interface SDKUserMessage {
   type: 'user';
-  message: { role: 'user'; content: string | ContentBlock[] };
+  message: { role: 'user'; content: string };
   parent_tool_use_id: null;
   session_id: string;
 }
@@ -63,43 +59,6 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-
-/**
- * Parse a prompt string for embedded <image> tags and return either
- * a plain string (no images) or a multimodal content block array.
- */
-function parseMultimodalContent(text: string): string | ContentBlock[] {
-  const imageRegex = /<image mime="([^"]+)">([^<]+)<\/image>/g;
-  const matches = [...text.matchAll(imageRegex)];
-
-  if (matches.length === 0) return text;
-
-  const blocks: ContentBlock[] = [];
-  let lastIndex = 0;
-
-  for (const match of matches) {
-    // Add any text before this image tag
-    const textBefore = text.slice(lastIndex, match.index).trim();
-    if (textBefore) {
-      blocks.push({ type: 'text', text: textBefore });
-    }
-    // Add the image block
-    blocks.push({
-      type: 'image',
-      source: { type: 'base64', media_type: match[1], data: match[2] },
-    });
-    lastIndex = match.index! + match[0].length;
-  }
-
-  // Add any trailing text
-  const trailing = text.slice(lastIndex).trim();
-  if (trailing) {
-    blocks.push({ type: 'text', text: trailing });
-  }
-
-  log(`Parsed ${matches.length} image(s) from prompt, ${blocks.length} content blocks total`);
-  return blocks;
-}
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -113,7 +72,7 @@ class MessageStream {
   push(text: string): void {
     this.queue.push({
       type: 'user',
-      message: { role: 'user', content: parseMultimodalContent(text) },
+      message: { role: 'user', content: text },
       parent_tool_use_id: null,
       session_id: '',
     });
