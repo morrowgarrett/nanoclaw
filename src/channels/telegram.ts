@@ -3,6 +3,7 @@ import { Api, Bot } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
+import { resolveGroupFolderPath } from '../group-folder.js';
 import { downloadAndSavePhoto } from '../image.js';
 import { downloadDocument } from '../pdf.js';
 import { transcribeVoice } from '../transcription.js';
@@ -309,11 +310,12 @@ export class TelegramChannel implements Channel {
       );
 
       // Download photo and save to group workspace (agent reads via Read tool)
+      const groupPath = resolveGroupFolderPath(group.folder);
       const result = await downloadAndSavePhoto(
         this.bot!.api,
         this.botToken,
         ctx.message.photo,
-        group.folder,
+        groupPath,
       );
 
       const content = result
@@ -403,6 +405,7 @@ export class TelegramChannel implements Channel {
       );
 
       // Download the document so the agent can read it
+      const groupPath = resolveGroupFolderPath(group.folder);
       let content = `[Document: ${name}]${caption}`;
       if (doc?.file_id) {
         const result = await downloadDocument(
@@ -410,7 +413,7 @@ export class TelegramChannel implements Channel {
           this.botToken,
           doc.file_id,
           name,
-          group.folder,
+          groupPath,
         );
         if (result) {
           content = `${result.content} (path: ${result.hostPath})${caption}`;
