@@ -1,74 +1,56 @@
 #!/bin/bash
 # Refresh Claude OAuth token before it expires.
+# Uses Claude Code itself (not raw curl) to trigger internal token refresh.
 # Runs via cron every 4 hours.
 
 CRED_FILE="$HOME/.claude/.credentials.json"
 LOG="/home/garrett/nanoclaw/logs/oauth-refresh.log"
+CLAUDE_BIN="$HOME/.npm-global/bin/claude"
 
 if [ ! -f "$CRED_FILE" ]; then
     echo "$(date -Iseconds) No credentials file found" >> "$LOG"
     exit 1
 fi
 
-# Extract refresh token and check expiry
-REFRESH_TOKEN=$(python3 -c "import json; d=json.load(open('$CRED_FILE')); print(d.get('claudeAiOauth',{}).get('refreshToken',''))")
+# Check current token expiry
 EXPIRES_AT=$(python3 -c "import json; d=json.load(open('$CRED_FILE')); print(d.get('claudeAiOauth',{}).get('expiresAt',0))")
 NOW_MS=$(python3 -c "import time; print(int(time.time()*1000))")
-
-if [ -z "$REFRESH_TOKEN" ]; then
-    echo "$(date -Iseconds) No refresh token in credentials" >> "$LOG"
-    exit 1
-fi
-
-# Check if token expires within 2 hours (7200000 ms)
 REMAINING=$((EXPIRES_AT - NOW_MS))
+REMAINING_MIN=$((REMAINING / 60000))
+
+# Skip if token is still valid for more than 2 hours
 if [ "$REMAINING" -gt 7200000 ]; then
-    echo "$(date -Iseconds) Token still valid for $((REMAINING / 3600000))h — skipping refresh" >> "$LOG"
+    echo "$(date -Iseconds) Token valid for $((REMAINING / 3600000))h — skipping" >> "$LOG"
     exit 0
 fi
 
-echo "$(date -Iseconds) Token expires in $((REMAINING / 60000))m — refreshing" >> "$LOG"
+echo "$(date -Iseconds) Token expires in ${REMAINING_MIN}m — triggering refresh via Claude Code" >> "$LOG"
 
-# Call Claude's OAuth token refresh endpoint
-RESPONSE=$(curl -s -X POST "https://platform.claude.com/v1/oauth/token" \
-    -H "Content-Type: application/json" \
-    -d "{\"grant_type\":\"refresh_token\",\"refresh_token\":\"${REFRESH_TOKEN}\",\"client_id\":\"9d1c250a-e61b-44d9-88ed-5944d1962f5e\",\"scope\":\"user:inference user:profile user:sessions:claude_code user:mcp_servers user:file_upload\"}")
+# Use Claude Code in print mode to make an API call, which triggers its
+# internal token refresh logic. This works because Claude Code checks token
+# expiry before each request and refreshes using the proper OAuth flow.
+BEFORE_EXPIRY="$EXPIRES_AT"
+OUTPUT=$(timeout 30 "$CLAUDE_BIN" -p "ok" --no-input 2>&1)
+EXIT_CODE=$?
 
-# Check for error
-ERROR=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error',''))" 2>/dev/null)
-if [ -n "$ERROR" ] && [ "$ERROR" != "" ]; then
-    echo "$(date -Iseconds) Refresh failed: $RESPONSE" >> "$LOG"
+if [ $EXIT_CODE -ne 0 ]; then
+    echo "$(date -Iseconds) Claude Code exited with code $EXIT_CODE: $OUTPUT" >> "$LOG"
+    # If Claude Code fails, the token may need manual /login
     exit 1
 fi
 
-# Extract new tokens
-NEW_ACCESS=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('access_token',''))" 2>/dev/null)
-NEW_REFRESH=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('refresh_token',''))" 2>/dev/null)
-NEW_EXPIRES_IN=$(echo "$RESPONSE" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('expires_in',0))" 2>/dev/null)
+# Check if credentials were updated
+NEW_EXPIRES_AT=$(python3 -c "import json; d=json.load(open('$CRED_FILE')); print(d.get('claudeAiOauth',{}).get('expiresAt',0))")
+NEW_REMAINING=$(( (NEW_EXPIRES_AT - $(python3 -c "import time; print(int(time.time()*1000))")) / 3600000 ))
 
-if [ -z "$NEW_ACCESS" ] || [ "$NEW_ACCESS" = "" ]; then
-    echo "$(date -Iseconds) No access token in response: $RESPONSE" >> "$LOG"
-    exit 1
+if [ "$NEW_EXPIRES_AT" -gt "$BEFORE_EXPIRY" ]; then
+    echo "$(date -Iseconds) Token refreshed — now valid for ${NEW_REMAINING}h" >> "$LOG"
+else
+    echo "$(date -Iseconds) Claude Code ran but token expiry unchanged (${NEW_REMAINING}h remaining)" >> "$LOG"
 fi
 
-# Calculate new expiry timestamp
-NEW_EXPIRES_AT=$((NOW_MS + NEW_EXPIRES_IN * 1000))
-
-# Update credentials file
-python3 -c "
-import json
-with open('$CRED_FILE', 'r') as f:
-    d = json.load(f)
-d['claudeAiOauth']['accessToken'] = '$NEW_ACCESS'
-if '$NEW_REFRESH':
-    d['claudeAiOauth']['refreshToken'] = '$NEW_REFRESH'
-d['claudeAiOauth']['expiresAt'] = $NEW_EXPIRES_AT
-with open('$CRED_FILE', 'w') as f:
-    json.dump(d, f, indent=2)
-"
-
-# Sync to NanoClaw session dirs
+# Sync refreshed credentials to NanoClaw session dirs
 cp "$CRED_FILE" /home/garrett/nanoclaw/data/sessions/telegram_main/.claude/.credentials.json 2>/dev/null
 cp "$CRED_FILE" /home/garrett/nanoclaw/data/sessions/telegram_the-desk/.claude/.credentials.json 2>/dev/null
 
-echo "$(date -Iseconds) Token refreshed successfully, expires in $((NEW_EXPIRES_IN / 3600))h" >> "$LOG"
+echo "$(date -Iseconds) Credential sync complete" >> "$LOG"

@@ -60,7 +60,7 @@ export class MattermostChannel implements Channel {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}),
-      ...(options.headers as Record<string, string> || {}),
+      ...((options.headers as Record<string, string>) || {}),
     };
     return fetch(`${this.serverUrl}/api/v4${path}`, { ...options, headers });
   }
@@ -110,35 +110,52 @@ export class MattermostChannel implements Channel {
         this.userCache.set(userId, user);
         return user;
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
 
-    return { id: userId, username: 'unknown', first_name: 'Unknown', last_name: '' };
+    return {
+      id: userId,
+      username: 'unknown',
+      first_name: 'Unknown',
+      last_name: '',
+    };
   }
 
   private async getChannelName(channelId: string): Promise<string> {
     try {
       const resp = await this.api(`/channels/${channelId}`);
       if (resp.ok) {
-        const ch = (await resp.json()) as { display_name: string; name: string; type: string };
+        const ch = (await resp.json()) as {
+          display_name: string;
+          name: string;
+          type: string;
+        };
         if (ch.type === 'D') return 'DM';
         if (ch.type === 'G') return 'Group DM';
         return ch.display_name || ch.name;
       }
-    } catch { /* fall through */ }
+    } catch {
+      /* fall through */
+    }
     return 'unknown';
   }
 
   private connectWebSocket(): void {
-    const wsUrl = this.serverUrl.replace(/^https/, 'wss').replace(/^http/, 'ws');
+    const wsUrl = this.serverUrl
+      .replace(/^https/, 'wss')
+      .replace(/^http/, 'ws');
     this.ws = new WebSocket(`${wsUrl}/api/v4/websocket`);
 
     this.ws.on('open', () => {
       // Authenticate the WebSocket connection
-      this.ws!.send(JSON.stringify({
-        seq: this.wsSeq++,
-        action: 'authentication_challenge',
-        data: { token: this.token },
-      }));
+      this.ws!.send(
+        JSON.stringify({
+          seq: this.wsSeq++,
+          action: 'authentication_challenge',
+          data: { token: this.token },
+        }),
+      );
       this.connected = true;
       logger.info('Mattermost WebSocket connected');
     });
@@ -224,14 +241,22 @@ export class MattermostChannel implements Channel {
   }
 
   async connect(): Promise<void> {
-    await this.login();
-    this.connectWebSocket();
+    try {
+      await this.login();
+      this.connectWebSocket();
 
-    // Refresh token every 6 hours
-    setInterval(() => this.refreshToken(), 6 * 60 * 60 * 1000);
+      // Refresh token every 6 hours
+      setInterval(() => this.refreshToken(), 6 * 60 * 60 * 1000);
 
-    console.log(`\n  Mattermost: ${this.serverUrl}`);
-    console.log(`  User: ${this.loginId}\n`);
+      console.log(`\n  Mattermost: ${this.serverUrl}`);
+      console.log(`  User: ${this.loginId}\n`);
+    } catch (err) {
+      logger.warn(
+        { err: (err as Error).message, url: this.serverUrl },
+        'Mattermost: initial connection failed, will retry in background',
+      );
+      this.scheduleReconnect();
+    }
   }
 
   async sendMessage(jid: string, text: string): Promise<void> {
@@ -246,7 +271,10 @@ export class MattermostChannel implements Channel {
         });
         if (!resp.ok) {
           const err = await resp.text();
-          logger.error({ channelId, status: resp.status, err }, 'Mattermost send failed');
+          logger.error(
+            { channelId, status: resp.status, err },
+            'Mattermost send failed',
+          );
           return;
         }
       } else {
@@ -254,7 +282,10 @@ export class MattermostChannel implements Channel {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
           await this.api('/posts', {
             method: 'POST',
-            body: JSON.stringify({ channel_id: channelId, message: text.slice(i, i + MAX_LENGTH) }),
+            body: JSON.stringify({
+              channel_id: channelId,
+              message: text.slice(i, i + MAX_LENGTH),
+            }),
           });
         }
       }
@@ -292,12 +323,16 @@ export class MattermostChannel implements Channel {
     if (!this.connected) return;
     try {
       const channelId = jid.replace(/^mm:/, '');
-      this.ws?.send(JSON.stringify({
-        action: 'user_typing',
-        seq: this.wsSeq++,
-        data: { channel_id: channelId, parent_id: '' },
-      }));
-    } catch { /* ignore */ }
+      this.ws?.send(
+        JSON.stringify({
+          action: 'user_typing',
+          seq: this.wsSeq++,
+          data: { channel_id: channelId, parent_id: '' },
+        }),
+      );
+    } catch {
+      /* ignore */
+    }
   }
 }
 
@@ -308,8 +343,10 @@ registerChannel('mattermost', (opts: ChannelOpts) => {
     'MATTERMOST_PASSWORD',
   ]);
   const url = process.env.MATTERMOST_URL || envVars.MATTERMOST_URL || '';
-  const username = process.env.MATTERMOST_USERNAME || envVars.MATTERMOST_USERNAME || '';
-  const password = process.env.MATTERMOST_PASSWORD || envVars.MATTERMOST_PASSWORD || '';
+  const username =
+    process.env.MATTERMOST_USERNAME || envVars.MATTERMOST_USERNAME || '';
+  const password =
+    process.env.MATTERMOST_PASSWORD || envVars.MATTERMOST_PASSWORD || '';
 
   if (!url || !username || !password) {
     logger.debug('Mattermost: credentials not configured, skipping');

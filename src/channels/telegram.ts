@@ -235,6 +235,15 @@ export class TelegramChannel implements Channel {
         return;
       }
 
+      // Acknowledge receipt with 👀 reaction
+      try {
+        await ctx.api.setMessageReaction(ctx.chat.id, ctx.message.message_id, [
+          { type: 'emoji', emoji: '👀' },
+        ]);
+      } catch {
+        // Reaction API may not be available in all chat types
+      }
+
       // Deliver message — startMessageLoop() will pick it up
       this.opts.onMessage(chatJid, {
         id: msgId,

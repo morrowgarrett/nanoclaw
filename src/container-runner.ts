@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, execSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -271,17 +271,46 @@ function buildContainerArgs(
     args.push('-e', `PARALLEL_API_KEY=${process.env.PARALLEL_API_KEY}`);
   }
 
-  // Credential injection strategy depends on auth mode.
+  // Google Workspace API credentials (read-only: Gmail, Calendar, Drive)
+  if (process.env.GOOGLE_CLIENT_ID) {
+    args.push('-e', `GOOGLE_CLIENT_ID=${process.env.GOOGLE_CLIENT_ID}`);
+    args.push('-e', `GOOGLE_CLIENT_SECRET=${process.env.GOOGLE_CLIENT_SECRET}`);
+    args.push('-e', `GOOGLE_REFRESH_TOKEN=${process.env.GOOGLE_REFRESH_TOKEN}`);
+  }
+
+  // Route all container requests through the credential proxy, which
+  // injects the real auth (API key or OAuth token + beta header).
+  args.push(
+    '-e',
+    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+  );
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
-    // API key mode: route through credential proxy.
-    args.push(
-      '-e',
-      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-    );
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
+  } else {
+    // OAuth mode: give the container a placeholder key so Claude Code
+    // skips its own OAuth exchange and sends requests directly.
+    // The proxy replaces this with the real Bearer token.
+    args.push('-e', 'ANTHROPIC_API_KEY=placeholder-oauth');
   }
-  // OAuth mode: credentials synced from host .claude/ directory at container spawn.
+
+  // PageForge document server access (BrightWire consulting)
+  if (process.env.PAGEFORGE_URL) {
+    args.push('-e', `PAGEFORGE_URL=${process.env.PAGEFORGE_URL}`);
+    // Resolve Tailscale hostname so container DNS works
+    try {
+      const url = new URL(process.env.PAGEFORGE_URL);
+      const ip = execSync(`dig +short ${url.hostname} 2>/dev/null`, {
+        encoding: 'utf-8',
+        timeout: 3000,
+      }).trim();
+      if (ip && /^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+        args.push('--add-host', `${url.hostname}:${ip}`);
+      }
+    } catch {
+      // DNS resolution failed — container will try without it
+    }
+  }
 
   // Runtime-specific args for host gateway resolution
   args.push(...hostGatewayArgs());
@@ -427,12 +456,7 @@ export async function runContainerAgent(
       const chunk = data.toString();
       const lines = chunk.trim().split('\n');
       for (const line of lines) {
-        if (!line) continue;
-        if (line.includes('[OLLAMA]')) {
-          logger.info({ container: group.folder }, line);
-        } else {
-          logger.debug({ container: group.folder }, line);
-        }
+        if (line) logger.debug({ container: group.folder }, line);
       }
       // Don't reset timeout on stderr — SDK writes debug logs continuously.
       // Timeout only resets on actual output (OUTPUT_MARKER in stdout).

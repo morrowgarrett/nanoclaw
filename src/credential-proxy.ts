@@ -3,12 +3,13 @@
  * Containers connect here instead of directly to the Anthropic API.
  * The proxy injects real credentials so containers never see them.
  *
- * Two auth modes:
- *   API key:  Proxy injects x-api-key on every request.
- *   OAuth:    Container CLI exchanges its placeholder token for a temp
- *             API key via /api/oauth/claude_cli/create_api_key.
- *             Proxy injects real OAuth token on that exchange request;
- *             subsequent requests carry the temp key which is valid as-is.
+ * Three auth modes:
+ *   api-key:  Proxy injects x-api-key on every request.
+ *   oauth:    Proxy injects Bearer token + oauth beta header on every
+ *             request, matching how OpenClaw handles OAuth tokens.
+ *             The oat token does not actually expire server-side, so
+ *             no refresh is needed.
+ *   legacy:   Reads from ~/.claude/.credentials.json (fallback).
  */
 import { createServer, Server } from 'http';
 import { readFileSync } from 'fs';
@@ -26,9 +27,11 @@ export interface ProxyConfig {
   authMode: AuthMode;
 }
 
+/** Required beta header for OAuth token auth on the Anthropic API. */
+const OAUTH_BETA = 'oauth-2025-04-20';
+
 /**
  * Read the current OAuth access token from Claude Code's credentials file.
- * Claude Code keeps this file up-to-date with refreshed tokens.
  * Returns null if the file doesn't exist or can't be parsed.
  */
 function readClaudeCredentialsToken(): string | null {
@@ -43,6 +46,21 @@ function readClaudeCredentialsToken(): string | null {
   return null;
 }
 
+/**
+ * Append a beta flag to the anthropic-beta header if not already present.
+ */
+function ensureBeta(
+  headers: Record<string, string | number | string[] | undefined>,
+  beta: string,
+): void {
+  const existing = (headers['anthropic-beta'] as string) || '';
+  const betas = existing ? existing.split(',').map((b) => b.trim()) : [];
+  if (!betas.includes(beta)) {
+    betas.push(beta);
+  }
+  headers['anthropic-beta'] = betas.join(',');
+}
+
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
@@ -54,14 +72,14 @@ export function startCredentialProxy(
     'ANTHROPIC_BASE_URL',
   ]);
 
+  const oauthToken =
+    secrets.CLAUDE_CODE_OAUTH_TOKEN ||
+    secrets.ANTHROPIC_AUTH_TOKEN ||
+    undefined;
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 
-  // For OAuth mode: prefer .env token if set, otherwise read fresh from
-  // Claude's credentials file (which gets auto-refreshed by Claude Code).
-  const envOauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
   function getOauthToken(): string | undefined {
-    return envOauthToken || readClaudeCredentialsToken() || undefined;
+    return oauthToken || readClaudeCredentialsToken() || undefined;
   }
 
   const upstreamUrl = new URL(
@@ -93,16 +111,18 @@ export function startCredentialProxy(
           delete headers['x-api-key'];
           headers['x-api-key'] = secrets.ANTHROPIC_API_KEY;
         } else {
-          // OAuth mode: replace placeholder Bearer token with the real one
-          // only when the container actually sends an Authorization header
-          // (exchange request + auth probes). Post-exchange requests use
-          // x-api-key only, so they pass through without token injection.
-          if (headers['authorization']) {
+          // OAuth mode: unconditionally strip whatever auth the container
+          // sends and replace with the real oat token + required beta.
+          // This prevents the container's Claude Code from trying its own
+          // OAuth exchange flow, which fails through the proxy.
+          const token = getOauthToken();
+          if (token) {
             delete headers['authorization'];
-            const token = getOauthToken();
-            if (token) {
-              headers['authorization'] = `Bearer ${token}`;
-            }
+            delete headers['x-api-key'];
+            headers['authorization'] = `Bearer ${token}`;
+            ensureBeta(headers, OAUTH_BETA);
+          } else {
+            logger.warn('OAuth mode but no token available');
           }
         }
 
@@ -115,6 +135,23 @@ export function startCredentialProxy(
             headers,
           } as RequestOptions,
           (upRes) => {
+            // If upstream returns 401 in oauth mode, log it for debugging
+            if (upRes.statusCode === 401 && authMode === 'oauth') {
+              const errChunks: Buffer[] = [];
+              upRes.on('data', (c) => errChunks.push(c));
+              upRes.on('end', () => {
+                const errBody = Buffer.concat(errChunks).toString();
+                logger.error(
+                  { status: 401, path: req.url, body: errBody.slice(0, 300) },
+                  'Credential proxy: upstream 401 — token may need replacement',
+                );
+                if (!res.headersSent) {
+                  res.writeHead(401, upRes.headers);
+                  res.end(errBody);
+                }
+              });
+              return;
+            }
             res.writeHead(upRes.statusCode!, upRes.headers);
             upRes.pipe(res);
           },
@@ -137,7 +174,10 @@ export function startCredentialProxy(
     });
 
     server.listen(port, host, () => {
-      logger.info({ port, host, authMode }, 'Credential proxy started');
+      logger.info(
+        { port, host, authMode, hasToken: !!getOauthToken() },
+        'Credential proxy started',
+      );
       resolve(server);
     });
 
