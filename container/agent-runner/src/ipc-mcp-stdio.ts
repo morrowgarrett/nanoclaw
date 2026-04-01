@@ -496,6 +496,82 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+// --- Context Recall (#14) ---
+// Search past conversations using FTS5 full-text search on the host DB.
+// Lightweight alternative to full LCM (PR #1562).
+
+server.tool(
+  'recall',
+  'Search past conversations for keywords or topics. Returns matching messages from conversation history across all sessions.',
+  {
+    query: z
+      .string()
+      .describe('Search query — keywords, names, topics, or phrases'),
+    limit: z
+      .number()
+      .optional()
+      .describe('Max results to return (default 10)'),
+  },
+  async (args) => {
+    try {
+      // The host DB is mounted read-only at /workspace/project/store/messages.db
+      const dbPath = '/workspace/project/store/messages.db';
+      if (!fs.existsSync(dbPath)) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Message database not available for search.',
+            },
+          ],
+        };
+      }
+      const { execSync } = await import('child_process');
+      const maxResults = args.limit || 10;
+      const safeQuery = args.query.replace(/'/g, "''");
+      const result = execSync(
+        `sqlite3 "${dbPath}" "SELECT sender_name, content, timestamp, chat_jid FROM messages_fts WHERE messages_fts MATCH '${safeQuery}' ORDER BY rank LIMIT ${maxResults};" 2>/dev/null`,
+        { encoding: 'utf-8', timeout: 5000 },
+      );
+      if (!result.trim()) {
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `No results found for "${args.query}".`,
+            },
+          ],
+        };
+      }
+      const lines = result.trim().split('\n');
+      const formatted = lines
+        .map((line) => {
+          const parts = line.split('|');
+          return `[${parts[2] || '?'}] ${parts[0] || '?'}: ${parts[1] || ''}`;
+        })
+        .join('\n');
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Found ${lines.length} result(s) for "${args.query}":\n\n${formatted}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Search failed: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // --- Peer Communication (#13) ---
 // Send messages to Gear (OpenClaw on Surface Book) via SSH.
 // Clutch is the parent and has SSH access; Gear does not have reverse access.
