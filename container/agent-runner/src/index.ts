@@ -16,16 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFile, execSync } from 'child_process';
-
-/** Safe execSync wrapper — returns output or empty string on failure. */
-function execSyncSafe(cmd: string, timeoutMs = 8000): string {
-  try {
-    return execSync(cmd, { encoding: 'utf-8', timeout: timeoutMs }).trim();
-  } catch {
-    return '';
-  }
-}
+import { execFile } from 'child_process';
 import {
   query,
   HookCallback,
@@ -72,7 +63,6 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
-const QUERY_IDLE_TIMEOUT_MS = parseInt(process.env.QUERY_IDLE_TIMEOUT || '300000', 10); // 5 min default
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -207,28 +197,6 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
-
-      // Write structured compaction summary for session continuity (#12).
-      // This file is read by the next session to preserve context across
-      // compaction boundaries (goals, progress, decisions, key files).
-      const summaryPath = '/workspace/group/last-compaction-summary.md';
-      const structuredSummary = [
-        `# Compaction Summary — ${date}`,
-        '',
-        `**Session:** ${sessionId || 'unknown'}`,
-        `**Messages:** ${messages.length}`,
-        summary ? `**Topic:** ${summary}` : '',
-        '',
-        '## Key Context (preserved across compaction)',
-        '',
-        '> Review the archived conversation for full details:',
-        `> \`${filePath}\``,
-        '',
-      ]
-        .filter(Boolean)
-        .join('\n');
-      fs.writeFileSync(summaryPath, structuredSummary);
-      log('Wrote compaction summary for session continuity');
     } catch (err) {
       log(
         `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
@@ -403,54 +371,6 @@ function waitForIpcMessage(): Promise<string | null> {
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
-/**
- * Load learned skills from /workspace/group/skills/ directory (#11).
- * Skills are markdown files with YAML frontmatter (name, description).
- * Returns combined skill content to inject into system prompt.
- */
-function loadSkills(): string {
-  const skillsDir = '/workspace/group/skills';
-  try {
-    if (!fs.existsSync(skillsDir)) return '';
-    const files = fs.readdirSync(skillsDir).filter((f) => f.endsWith('.md'));
-    if (files.length === 0) return '';
-    const skills = files
-      .map((f) => {
-        try {
-          return fs.readFileSync(path.join(skillsDir, f), 'utf-8');
-        } catch {
-          return '';
-        }
-      })
-      .filter(Boolean);
-    if (skills.length > 0) {
-      log(`Loaded ${skills.length} skill(s) from ${skillsDir}`);
-      return '\n\n## Learned Skills\n\n' + skills.join('\n\n---\n\n');
-    }
-  } catch {
-    // Skills dir missing or unreadable
-  }
-  return '';
-}
-
-/**
- * Load MCP server configs from the group's .mcp.json file (PR #1515).
- * Allows per-group MCP server configuration without code changes.
- */
-function loadGroupMcpServers(): Record<string, unknown> {
-  const mcpPath = '/workspace/group/.mcp.json';
-  try {
-    const raw = fs.readFileSync(mcpPath, 'utf-8');
-    const parsed = JSON.parse(raw);
-    const servers = parsed.mcpServers || {};
-    const count = Object.keys(servers).length;
-    if (count > 0) log(`Loaded ${count} MCP server(s) from ${mcpPath}`);
-    return servers;
-  } catch {
-    return {};
-  }
-}
-
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
@@ -462,21 +382,9 @@ async function runQuery(
   newSessionId?: string;
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
-  aborted: boolean;
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
-
-  // Abort query if no SDK messages for QUERY_IDLE_TIMEOUT_MS
-  const abortController = new AbortController();
-  let aborted = false;
-  const startIdleTimer = () =>
-    setTimeout(() => {
-      log(`No SDK messages for ${QUERY_IDLE_TIMEOUT_MS}ms, aborting query`);
-      aborted = true;
-      abortController.abort();
-    }, QUERY_IDLE_TIMEOUT_MS);
-  let idleTimer = startIdleTimer();
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -511,47 +419,6 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
-  // Frozen memory snapshot: query memU once at container start for relevant
-  // context. Injected as immutable system prompt prefix for prompt caching.
-  // This avoids re-querying memU on every turn and enables Anthropic's
-  // automatic prefix caching (50-75% input token savings).
-  let memorySnapshot = '';
-  const memuUrl = process.env.MEMU_SIDECAR_URL;
-  const memuKey = process.env.MEMU_API_KEY;
-  if (memuUrl && memuKey) {
-    try {
-      const query = containerInput.prompt.slice(0, 200).replace(/'/g, '');
-      const resp = execSyncSafe(
-        `curl -s --connect-timeout 3 --max-time 5 -X POST "${memuUrl}/retrieve" ` +
-          `-H "X-API-Key: ${memuKey}" ` +
-          `-H "Content-Type: application/json" ` +
-          `-d '${JSON.stringify({ query, top_k: 5 })}'`,
-      );
-      if (resp) {
-        const memories = JSON.parse(resp);
-        if (Array.isArray(memories) && memories.length > 0) {
-          memorySnapshot =
-            '\n\n## Recalled Memories\n' +
-            memories
-              .map(
-                (m: { content: string; score?: number }) =>
-                  `- ${m.content.slice(0, 500)}`,
-              )
-              .join('\n');
-          log(`Loaded ${memories.length} memories from memU`);
-        }
-      }
-    } catch {
-      // memU unavailable — continue without memory context
-    }
-  }
-
-  // Append memory snapshot and learned skills to system prompt for caching
-  const skillsContent = loadSkills();
-  if (memorySnapshot || skillsContent) {
-    globalClaudeMd = (globalClaudeMd || '') + memorySnapshot + skillsContent;
-  }
-
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
@@ -582,37 +449,30 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      allowedTools: (() => {
-        const groupMcp = loadGroupMcpServers();
-        const mcpToolPatterns = [
-          'mcp__nanoclaw__*',
-          'mcp__ollama__*',
-          'mcp__parallel-search__*',
-          'mcp__parallel-task__*',
-          ...Object.keys(groupMcp).map((name) => `mcp__${name}__*`),
-        ];
-        return [
-          'Bash',
-          'Read',
-          'Write',
-          'Edit',
-          'Glob',
-          'Grep',
-          'WebSearch',
-          'WebFetch',
-          'Task',
-          'TaskOutput',
-          'TaskStop',
-          'TeamCreate',
-          'TeamDelete',
-          'SendMessage',
-          'TodoWrite',
-          'ToolSearch',
-          'Skill',
-          'NotebookEdit',
-          ...mcpToolPatterns,
-        ];
-      })(),
+      allowedTools: [
+        'Bash',
+        'Read',
+        'Write',
+        'Edit',
+        'Glob',
+        'Grep',
+        'WebSearch',
+        'WebFetch',
+        'Task',
+        'TaskOutput',
+        'TaskStop',
+        'TeamCreate',
+        'TeamDelete',
+        'SendMessage',
+        'TodoWrite',
+        'ToolSearch',
+        'Skill',
+        'NotebookEdit',
+        'mcp__nanoclaw__*',
+        'mcp__ollama__*',
+        'mcp__parallel-search__*',
+        'mcp__parallel-task__*'
+      ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -639,18 +499,14 @@ async function runQuery(
             headers: { 'Authorization': `Bearer ${process.env.PARALLEL_API_KEY}` },
           },
         } : {}),
-        ...loadGroupMcpServers(),
       },
       hooks: {
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],
       },
-      abortController,
     },
   })) {
-    clearTimeout(idleTimer);
-    idleTimer = startIdleTimer();
     messageCount++;
     const msgType =
       message.type === 'system'
@@ -696,12 +552,11 @@ async function runQuery(
     }
   }
 
-  clearTimeout(idleTimer);
   ipcPolling = false;
   log(
-    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, aborted: ${aborted}`,
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
   );
-  return { newSessionId, lastAssistantUuid, closedDuringQuery, aborted };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery };
 }
 
 interface ScriptResult {
@@ -960,17 +815,6 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
-      }
-
-      // Query was aborted due to idle timeout — exit so host can retry
-      if (queryResult.aborted) {
-        writeOutput({
-          status: 'error',
-          result: null,
-          newSessionId: sessionId,
-          error: 'Query idle timeout',
-        });
-        process.exit(1);
       }
 
       // Emit session update so host can track it
