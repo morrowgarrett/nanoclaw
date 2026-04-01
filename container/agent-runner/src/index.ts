@@ -198,6 +198,28 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // Write structured compaction summary for session continuity (#12).
+      // This file is read by the next session to preserve context across
+      // compaction boundaries (goals, progress, decisions, key files).
+      const summaryPath = '/workspace/group/last-compaction-summary.md';
+      const structuredSummary = [
+        `# Compaction Summary — ${date}`,
+        '',
+        `**Session:** ${sessionId || 'unknown'}`,
+        `**Messages:** ${messages.length}`,
+        summary ? `**Topic:** ${summary}` : '',
+        '',
+        '## Key Context (preserved across compaction)',
+        '',
+        '> Review the archived conversation for full details:',
+        `> \`${filePath}\``,
+        '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+      fs.writeFileSync(summaryPath, structuredSummary);
+      log('Wrote compaction summary for session continuity');
     } catch (err) {
       log(
         `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,

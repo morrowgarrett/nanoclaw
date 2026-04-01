@@ -496,6 +496,88 @@ Use available_groups.json to find the JID for a group. The folder name must be c
   },
 );
 
+// --- Peer Communication (#13) ---
+// Send messages to Gear (OpenClaw on Surface Book) via SSH.
+// Clutch is the parent and has SSH access; Gear does not have reverse access.
+
+server.tool(
+  'peer_send',
+  'Send a message to Gear (OpenClaw agent on Surface Book). Use this for cross-agent coordination, asking Gear to research something, or relaying information.',
+  {
+    message: z.string().describe('The message to send to Gear'),
+  },
+  async (args) => {
+    const { execSync } = await import('child_process');
+    try {
+      // Write the message to Gear's inbox via SSH
+      const timestamp = Date.now();
+      const filename = `clutch-${timestamp}.json`;
+      const payload = JSON.stringify({
+        from: 'clutch',
+        message: args.message,
+        timestamp: new Date().toISOString(),
+      });
+      execSync(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no garrett@192.168.1.235 ` +
+          `"mkdir -p ~/.openclaw/workspace/inbox && echo '${payload.replace(/'/g, "'\\''")}' > ~/.openclaw/workspace/inbox/${filename}"`,
+        { timeout: 10000 },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Message sent to Gear via SSH (${filename}). Gear will see it on next workspace check.`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Failed to send to Gear: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.tool(
+  'peer_status',
+  'Check if Gear (OpenClaw on Surface Book) is online and get its current status.',
+  {},
+  async () => {
+    const { execSync } = await import('child_process');
+    try {
+      const output = execSync(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no garrett@192.168.1.235 ` +
+          `"systemctl --user status openclaw-gateway 2>&1 | head -5; echo '---'; uptime"`,
+        { encoding: 'utf-8', timeout: 10000 },
+      );
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Gear status:\n${output}`,
+          },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: `Cannot reach Gear: ${err instanceof Error ? err.message : String(err)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

@@ -202,11 +202,7 @@ export function startCredentialProxy(
           } as RequestOptions,
           (upRes) => {
             // On 429 rate limit, cool down the token for 60s
-            if (
-              upRes.statusCode === 429 &&
-              authMode === 'oauth' &&
-              usedToken
-            ) {
+            if (upRes.statusCode === 429 && authMode === 'oauth' && usedToken) {
               pool.markError(usedToken, 60_000);
             }
 
