@@ -63,6 +63,7 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const QUERY_IDLE_TIMEOUT_MS = parseInt(process.env.QUERY_IDLE_TIMEOUT || '300000', 10); // 5 min default
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -371,6 +372,24 @@ function waitForIpcMessage(): Promise<string | null> {
  * allowing agent teams subagents to run to completion.
  * Also pipes IPC messages into the stream during the query.
  */
+/**
+ * Load MCP server configs from the group's .mcp.json file (PR #1515).
+ * Allows per-group MCP server configuration without code changes.
+ */
+function loadGroupMcpServers(): Record<string, unknown> {
+  const mcpPath = '/workspace/group/.mcp.json';
+  try {
+    const raw = fs.readFileSync(mcpPath, 'utf-8');
+    const parsed = JSON.parse(raw);
+    const servers = parsed.mcpServers || {};
+    const count = Object.keys(servers).length;
+    if (count > 0) log(`Loaded ${count} MCP server(s) from ${mcpPath}`);
+    return servers;
+  } catch {
+    return {};
+  }
+}
+
 async function runQuery(
   prompt: string,
   sessionId: string | undefined,
@@ -382,9 +401,21 @@ async function runQuery(
   newSessionId?: string;
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
+  aborted: boolean;
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
+
+  // Abort query if no SDK messages for QUERY_IDLE_TIMEOUT_MS
+  const abortController = new AbortController();
+  let aborted = false;
+  const startIdleTimer = () =>
+    setTimeout(() => {
+      log(`No SDK messages for ${QUERY_IDLE_TIMEOUT_MS}ms, aborting query`);
+      aborted = true;
+      abortController.abort();
+    }, QUERY_IDLE_TIMEOUT_MS);
+  let idleTimer = startIdleTimer();
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -449,30 +480,37 @@ async function runQuery(
             append: globalClaudeMd,
           }
         : undefined,
-      allowedTools: [
-        'Bash',
-        'Read',
-        'Write',
-        'Edit',
-        'Glob',
-        'Grep',
-        'WebSearch',
-        'WebFetch',
-        'Task',
-        'TaskOutput',
-        'TaskStop',
-        'TeamCreate',
-        'TeamDelete',
-        'SendMessage',
-        'TodoWrite',
-        'ToolSearch',
-        'Skill',
-        'NotebookEdit',
-        'mcp__nanoclaw__*',
-        'mcp__ollama__*',
-        'mcp__parallel-search__*',
-        'mcp__parallel-task__*'
-      ],
+      allowedTools: (() => {
+        const groupMcp = loadGroupMcpServers();
+        const mcpToolPatterns = [
+          'mcp__nanoclaw__*',
+          'mcp__ollama__*',
+          'mcp__parallel-search__*',
+          'mcp__parallel-task__*',
+          ...Object.keys(groupMcp).map((name) => `mcp__${name}__*`),
+        ];
+        return [
+          'Bash',
+          'Read',
+          'Write',
+          'Edit',
+          'Glob',
+          'Grep',
+          'WebSearch',
+          'WebFetch',
+          'Task',
+          'TaskOutput',
+          'TaskStop',
+          'TeamCreate',
+          'TeamDelete',
+          'SendMessage',
+          'TodoWrite',
+          'ToolSearch',
+          'Skill',
+          'NotebookEdit',
+          ...mcpToolPatterns,
+        ];
+      })(),
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
       allowDangerouslySkipPermissions: true,
@@ -499,14 +537,18 @@ async function runQuery(
             headers: { 'Authorization': `Bearer ${process.env.PARALLEL_API_KEY}` },
           },
         } : {}),
+        ...loadGroupMcpServers(),
       },
       hooks: {
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],
       },
+      abortController,
     },
   })) {
+    clearTimeout(idleTimer);
+    idleTimer = startIdleTimer();
     messageCount++;
     const msgType =
       message.type === 'system'
@@ -552,11 +594,12 @@ async function runQuery(
     }
   }
 
+  clearTimeout(idleTimer);
   ipcPolling = false;
   log(
-    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, aborted: ${aborted}`,
   );
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, aborted };
 }
 
 interface ScriptResult {
@@ -815,6 +858,17 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
+      }
+
+      // Query was aborted due to idle timeout — exit so host can retry
+      if (queryResult.aborted) {
+        writeOutput({
+          status: 'error',
+          result: null,
+          newSessionId: sessionId,
+          error: 'Query idle timeout',
+        });
+        process.exit(1);
       }
 
       // Emit session update so host can track it

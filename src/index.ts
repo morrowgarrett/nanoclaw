@@ -4,6 +4,7 @@ import path from 'path';
 import {
   ASSISTANT_NAME,
   CREDENTIAL_PROXY_PORT,
+  DATA_DIR,
   DEFAULT_TRIGGER,
   getTriggerPattern,
   GROUPS_DIR,
@@ -417,7 +418,35 @@ async function runAgent(
   onOutput?: (output: ContainerOutput) => Promise<void>,
 ): Promise<'success' | 'error'> {
   const isMain = group.isMain === true;
-  const sessionId = sessions[group.folder];
+  let sessionId: string | undefined = sessions[group.folder];
+
+  // Rotate oversized session files to prevent container timeouts (PR #700)
+  if (sessionId) {
+    const sessionPath = path.join(
+      DATA_DIR,
+      'sessions',
+      group.folder,
+      '.claude',
+      'projects',
+      '-workspace-group',
+      `${sessionId}.jsonl`,
+    );
+    try {
+      const stat = fs.statSync(sessionPath);
+      const sizeMB = stat.size / (1024 * 1024);
+      if (sizeMB > 5) {
+        logger.warn(
+          { group: group.name, sessionId, sizeMB: sizeMB.toFixed(1) },
+          'Session file exceeds 5MB, rotating to fresh session',
+        );
+        deleteSession(group.folder);
+        delete sessions[group.folder];
+        sessionId = undefined;
+      }
+    } catch {
+      // File doesn't exist yet — that's fine
+    }
+  }
 
   // Update tasks snapshot for container to read (filtered by group)
   const tasks = getAllTasks();
