@@ -61,6 +61,65 @@ function ensureBeta(
   headers['anthropic-beta'] = betas.join(',');
 }
 
+/**
+ * Credential pool with round-robin and cooldown support (#10).
+ * Supports multiple OAuth tokens via comma-separated CLAUDE_CODE_OAUTH_TOKEN.
+ */
+interface CredentialEntry {
+  token: string;
+  cooldownUntil: number;
+  errorCount: number;
+}
+
+class CredentialPool {
+  private entries: CredentialEntry[] = [];
+  private index = 0;
+
+  constructor(tokens: string[]) {
+    this.entries = tokens.map((t) => ({
+      token: t.trim(),
+      cooldownUntil: 0,
+      errorCount: 0,
+    }));
+  }
+
+  get size(): number {
+    return this.entries.length;
+  }
+
+  /** Get next available token (round-robin, skipping cooled-down entries). */
+  getToken(): string | undefined {
+    if (this.entries.length === 0) return undefined;
+    const now = Date.now();
+    for (let i = 0; i < this.entries.length; i++) {
+      const idx = (this.index + i) % this.entries.length;
+      const entry = this.entries[idx];
+      if (entry.cooldownUntil <= now) {
+        this.index = (idx + 1) % this.entries.length;
+        return entry.token;
+      }
+    }
+    // All on cooldown — use the one with earliest expiry
+    const earliest = this.entries.reduce((a, b) =>
+      a.cooldownUntil < b.cooldownUntil ? a : b,
+    );
+    return earliest.token;
+  }
+
+  /** Mark a token as having an error (rate limit, auth failure). */
+  markError(token: string, cooldownMs = 60_000): void {
+    const entry = this.entries.find((e) => e.token === token);
+    if (entry) {
+      entry.errorCount++;
+      entry.cooldownUntil = Date.now() + cooldownMs;
+      logger.warn(
+        { errorCount: entry.errorCount, cooldownMs },
+        'Credential marked with cooldown',
+      );
+    }
+  }
+}
+
 export function startCredentialProxy(
   port: number,
   host = '127.0.0.1',
@@ -72,14 +131,18 @@ export function startCredentialProxy(
     'ANTHROPIC_BASE_URL',
   ]);
 
-  const oauthToken =
-    secrets.CLAUDE_CODE_OAUTH_TOKEN ||
-    secrets.ANTHROPIC_AUTH_TOKEN ||
-    undefined;
+  // Build credential pool from comma-separated tokens
+  const tokenStr =
+    secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN || '';
+  const tokenList = tokenStr
+    .split(',')
+    .map((t) => t.trim())
+    .filter(Boolean);
+  const pool = new CredentialPool(tokenList);
   const authMode: AuthMode = secrets.ANTHROPIC_API_KEY ? 'api-key' : 'oauth';
 
   function getOauthToken(): string | undefined {
-    return oauthToken || readClaudeCredentialsToken() || undefined;
+    return pool.getToken() || readClaudeCredentialsToken() || undefined;
   }
 
   const upstreamUrl = new URL(
@@ -126,6 +189,9 @@ export function startCredentialProxy(
           }
         }
 
+        // Track which token was used for error handling
+        const usedToken = authMode === 'oauth' ? getOauthToken() : undefined;
+
         const upstream = makeRequest(
           {
             hostname: upstreamUrl.hostname,
@@ -135,8 +201,18 @@ export function startCredentialProxy(
             headers,
           } as RequestOptions,
           (upRes) => {
-            // If upstream returns 401 in oauth mode, log it for debugging
+            // On 429 rate limit, cool down the token for 60s
+            if (
+              upRes.statusCode === 429 &&
+              authMode === 'oauth' &&
+              usedToken
+            ) {
+              pool.markError(usedToken, 60_000);
+            }
+
+            // If upstream returns 401 in oauth mode, log and cool down token
             if (upRes.statusCode === 401 && authMode === 'oauth') {
+              if (usedToken) pool.markError(usedToken, 3600_000); // 1hr cooldown
               const errChunks: Buffer[] = [];
               upRes.on('data', (c) => errChunks.push(c));
               upRes.on('end', () => {

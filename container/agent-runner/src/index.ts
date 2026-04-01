@@ -373,6 +373,36 @@ function waitForIpcMessage(): Promise<string | null> {
  * Also pipes IPC messages into the stream during the query.
  */
 /**
+ * Load learned skills from /workspace/group/skills/ directory (#11).
+ * Skills are markdown files with YAML frontmatter (name, description).
+ * Returns combined skill content to inject into system prompt.
+ */
+function loadSkills(): string {
+  const skillsDir = '/workspace/group/skills';
+  try {
+    if (!fs.existsSync(skillsDir)) return '';
+    const files = fs.readdirSync(skillsDir).filter((f) => f.endsWith('.md'));
+    if (files.length === 0) return '';
+    const skills = files
+      .map((f) => {
+        try {
+          return fs.readFileSync(path.join(skillsDir, f), 'utf-8');
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
+    if (skills.length > 0) {
+      log(`Loaded ${skills.length} skill(s) from ${skillsDir}`);
+      return '\n\n## Learned Skills\n\n' + skills.join('\n\n---\n\n');
+    }
+  } catch {
+    // Skills dir missing or unreadable
+  }
+  return '';
+}
+
+/**
  * Load MCP server configs from the group's .mcp.json file (PR #1515).
  * Allows per-group MCP server configuration without code changes.
  */
@@ -485,9 +515,10 @@ async function runQuery(
     }
   }
 
-  // Append memory snapshot to global CLAUDE.md for prompt caching
-  if (memorySnapshot) {
-    globalClaudeMd = (globalClaudeMd || '') + memorySnapshot;
+  // Append memory snapshot and learned skills to system prompt for caching
+  const skillsContent = loadSkills();
+  if (memorySnapshot || skillsContent) {
+    globalClaudeMd = (globalClaudeMd || '') + memorySnapshot + skillsContent;
   }
 
   // Discover additional directories mounted at /workspace/extra/*
