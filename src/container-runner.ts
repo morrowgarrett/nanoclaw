@@ -288,10 +288,11 @@ function buildContainerArgs(
   if (authMode === 'api-key') {
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
   } else {
-    // OAuth mode: give the container a placeholder key so Claude Code
-    // skips its own OAuth exchange and sends requests directly.
-    // The proxy replaces this with the real Bearer token.
-    args.push('-e', 'ANTHROPIC_API_KEY=placeholder-oauth');
+    // OAuth mode: let Claude Code use the .credentials.json OAuth token
+    // that's mounted from the host. The SDK will send Authorization: Bearer
+    // to ANTHROPIC_BASE_URL (our proxy), and the proxy replaces it with
+    // the real token + oauth beta header. Don't set ANTHROPIC_API_KEY —
+    // a fake placeholder causes the SDK to hang on validation.
   }
 
   // PageForge document server access (BrightWire consulting)
