@@ -278,22 +278,19 @@ function buildContainerArgs(
     args.push('-e', `GOOGLE_REFRESH_TOKEN=${process.env.GOOGLE_REFRESH_TOKEN}`);
   }
 
-  // Route all container requests through the credential proxy, which
-  // injects the real auth (API key or OAuth token + beta header).
-  args.push(
-    '-e',
-    `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
-  );
+  // Credential injection strategy depends on auth mode.
   const authMode = detectAuthMode();
   if (authMode === 'api-key') {
+    // API key mode: route through credential proxy.
+    args.push(
+      '-e',
+      `ANTHROPIC_BASE_URL=http://${CONTAINER_HOST_GATEWAY}:${CREDENTIAL_PROXY_PORT}`,
+    );
     args.push('-e', 'ANTHROPIC_API_KEY=placeholder');
-  } else {
-    // OAuth mode: let Claude Code use the .credentials.json OAuth token
-    // that's mounted from the host. The SDK will send Authorization: Bearer
-    // to ANTHROPIC_BASE_URL (our proxy), and the proxy replaces it with
-    // the real token + oauth beta header. Don't set ANTHROPIC_API_KEY —
-    // a fake placeholder causes the SDK to hang on validation.
   }
+  // OAuth mode: credentials synced from host .claude/ directory at container spawn.
+  // Claude Code inside the container uses the .credentials.json token directly
+  // against api.anthropic.com. The token doesn't actually expire server-side.
 
   // PageForge document server access (BrightWire consulting)
   if (process.env.PAGEFORGE_URL) {
