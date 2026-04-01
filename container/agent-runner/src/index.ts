@@ -16,7 +16,16 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, execSync } from 'child_process';
+
+/** Safe execSync wrapper — returns output or empty string on failure. */
+function execSyncSafe(cmd: string, timeoutMs = 8000): string {
+  try {
+    return execSync(cmd, { encoding: 'utf-8', timeout: timeoutMs }).trim();
+  } catch {
+    return '';
+  }
+}
 import {
   query,
   HookCallback,
@@ -511,26 +520,26 @@ async function runQuery(
   const memuKey = process.env.MEMU_API_KEY;
   if (memuUrl && memuKey) {
     try {
-      const { execSync } = await import('child_process');
-      const query = containerInput.prompt.slice(0, 200);
-      const resp = execSync(
-        `curl -s -X POST "${memuUrl}/retrieve" ` +
+      const query = containerInput.prompt.slice(0, 200).replace(/'/g, '');
+      const resp = execSyncSafe(
+        `curl -s --connect-timeout 3 --max-time 5 -X POST "${memuUrl}/retrieve" ` +
           `-H "X-API-Key: ${memuKey}" ` +
           `-H "Content-Type: application/json" ` +
           `-d '${JSON.stringify({ query, top_k: 5 })}'`,
-        { encoding: 'utf-8', timeout: 5000 },
       );
-      const memories = JSON.parse(resp);
-      if (Array.isArray(memories) && memories.length > 0) {
-        memorySnapshot =
-          '\n\n## Recalled Memories\n' +
-          memories
-            .map(
-              (m: { content: string; score?: number }) =>
-                `- ${m.content.slice(0, 500)}`,
-            )
-            .join('\n');
-        log(`Loaded ${memories.length} memories from memU`);
+      if (resp) {
+        const memories = JSON.parse(resp);
+        if (Array.isArray(memories) && memories.length > 0) {
+          memorySnapshot =
+            '\n\n## Recalled Memories\n' +
+            memories
+              .map(
+                (m: { content: string; score?: number }) =>
+                  `- ${m.content.slice(0, 500)}`,
+              )
+              .join('\n');
+          log(`Loaded ${memories.length} memories from memU`);
+        }
       }
     } catch {
       // memU unavailable — continue without memory context

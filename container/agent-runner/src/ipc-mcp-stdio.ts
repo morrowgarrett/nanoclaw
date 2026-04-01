@@ -9,6 +9,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
+import { execSync } from 'child_process';
 import { CronExpressionParser } from 'cron-parser';
 
 const IPC_DIR = '/workspace/ipc';
@@ -526,7 +527,7 @@ server.tool(
           ],
         };
       }
-      const { execSync } = await import('child_process');
+      // execSync imported at top of file
       const maxResults = args.limit || 10;
       const safeQuery = args.query.replace(/'/g, "''");
       const result = execSync(
