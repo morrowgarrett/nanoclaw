@@ -37,6 +37,23 @@ function createSchema(database: Database.Database): void {
     );
     CREATE INDEX IF NOT EXISTS idx_timestamp ON messages(timestamp);
 
+    -- FTS5 full-text search index for cross-session message recall (#8)
+    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+      content, sender_name, chat_jid,
+      content='messages',
+      content_rowid='rowid'
+    );
+
+    -- Triggers to keep FTS index in sync with messages table
+    CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+      INSERT INTO messages_fts(rowid, content, sender_name, chat_jid)
+      VALUES (new.rowid, new.content, new.sender_name, new.chat_jid);
+    END;
+    CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+      INSERT INTO messages_fts(messages_fts, rowid, content, sender_name, chat_jid)
+      VALUES ('delete', old.rowid, old.content, old.sender_name, old.chat_jid);
+    END;
+
     CREATE TABLE IF NOT EXISTS scheduled_tasks (
       id TEXT PRIMARY KEY,
       group_folder TEXT NOT NULL,
@@ -563,6 +580,40 @@ export function setSession(groupFolder: string, sessionId: string): void {
 
 export function deleteSession(groupFolder: string): void {
   db.prepare('DELETE FROM sessions WHERE group_folder = ?').run(groupFolder);
+}
+
+/**
+ * Full-text search across all stored messages (FTS5).
+ * Returns matching messages with context snippets.
+ */
+export function searchMessages(
+  query: string,
+  limit = 20,
+): Array<{
+  content: string;
+  sender_name: string;
+  chat_jid: string;
+  rank: number;
+}> {
+  try {
+    return db
+      .prepare(
+        `SELECT content, sender_name, chat_jid, rank
+         FROM messages_fts
+         WHERE messages_fts MATCH ?
+         ORDER BY rank
+         LIMIT ?`,
+      )
+      .all(query, limit) as Array<{
+      content: string;
+      sender_name: string;
+      chat_jid: string;
+      rank: number;
+    }>;
+  } catch {
+    // FTS table may not exist yet on first run
+    return [];
+  }
 }
 
 export function getAllSessions(): Record<string, string> {

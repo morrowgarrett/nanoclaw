@@ -450,6 +450,46 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
+  // Frozen memory snapshot: query memU once at container start for relevant
+  // context. Injected as immutable system prompt prefix for prompt caching.
+  // This avoids re-querying memU on every turn and enables Anthropic's
+  // automatic prefix caching (50-75% input token savings).
+  let memorySnapshot = '';
+  const memuUrl = process.env.MEMU_SIDECAR_URL;
+  const memuKey = process.env.MEMU_API_KEY;
+  if (memuUrl && memuKey) {
+    try {
+      const { execSync } = await import('child_process');
+      const query = containerInput.prompt.slice(0, 200);
+      const resp = execSync(
+        `curl -s -X POST "${memuUrl}/retrieve" ` +
+          `-H "X-API-Key: ${memuKey}" ` +
+          `-H "Content-Type: application/json" ` +
+          `-d '${JSON.stringify({ query, top_k: 5 })}'`,
+        { encoding: 'utf-8', timeout: 5000 },
+      );
+      const memories = JSON.parse(resp);
+      if (Array.isArray(memories) && memories.length > 0) {
+        memorySnapshot =
+          '\n\n## Recalled Memories\n' +
+          memories
+            .map(
+              (m: { content: string; score?: number }) =>
+                `- ${m.content.slice(0, 500)}`,
+            )
+            .join('\n');
+        log(`Loaded ${memories.length} memories from memU`);
+      }
+    } catch {
+      // memU unavailable — continue without memory context
+    }
+  }
+
+  // Append memory snapshot to global CLAUDE.md for prompt caching
+  if (memorySnapshot) {
+    globalClaudeMd = (globalClaudeMd || '') + memorySnapshot;
+  }
+
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
