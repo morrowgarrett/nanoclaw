@@ -452,26 +452,45 @@ async function runQuery(
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
 
-  // #6: Frozen memory snapshot from memU (query once, inject into prompt)
+  // Fetch memU briefing (Tier 1) and query-specific memories (Tier 2 preview)
   let memorySnapshot = '';
   const memuUrl = process.env.MEMU_SIDECAR_URL;
   const memuKey = process.env.MEMU_API_KEY;
   if (memuUrl && memuKey) {
+    // Tier 1: Write briefing file for persistent reference
     try {
-      const query = containerInput.prompt.slice(0, 200).replace(/'/g, '');
+      const briefingResp = execSyncSafe(
+        `curl -s --connect-timeout 3 --max-time 5 "${memuUrl}/briefing?limit=25" ` +
+          `-H "X-API-Key: ${memuKey}"`,
+      );
+      if (briefingResp) {
+        const briefingData = JSON.parse(briefingResp);
+        if (briefingData.briefing_text) {
+          const briefingPath = '/workspace/group/MEMORY_BRIEFING.md';
+          fs.writeFileSync(briefingPath, briefingData.briefing_text);
+          log(`Wrote memory briefing (${briefingData.count} items) to ${briefingPath}`);
+        }
+      }
+    } catch { /* briefing unavailable */ }
+
+    // Tier 2 preview: query-relevant memories injected into system prompt
+    try {
+      const queryText = containerInput.prompt.slice(0, 200).replace(/'/g, '');
       const resp = execSyncSafe(
         `curl -s --connect-timeout 3 --max-time 5 -X POST "${memuUrl}/retrieve" ` +
           `-H "X-API-Key: ${memuKey}" -H "Content-Type: application/json" ` +
-          `-d '${JSON.stringify({ query, top_k: 5 })}'`,
+          `-d '${JSON.stringify({ query: queryText, top_k: 5 })}'`,
       );
       if (resp) {
         const memories = JSON.parse(resp);
         const items = memories.items || memories;
         if (Array.isArray(items) && items.length > 0) {
-          memorySnapshot = '\n\n## Recalled Memories\n' +
-            items.map((m: { content?: string; summary?: string }) =>
-              `- ${(m.content || m.summary || '').slice(0, 500)}`
-            ).join('\n');
+          memorySnapshot = '\n\n## Recalled Memories (verify before acting)\n' +
+            items.map((m: { content?: string; summary?: string; confidence?: number; memory_class?: string }) => {
+              const conf = m.confidence ?? 0.8;
+              const cls = m.memory_class ?? 'knowledge';
+              return `- [${cls}:${Math.round(conf * 100)}%] ${(m.content || m.summary || '').slice(0, 500)}`;
+            }).join('\n');
           log(`Loaded ${items.length} memories from memU`);
         }
       }
