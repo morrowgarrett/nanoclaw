@@ -1,0 +1,167 @@
+{
+  "collected_at": "2026-04-01T19:31:02.229561",
+  "conversations": [],
+  "task_logs": [
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-04-01T21:08:56.677Z",
+      "duration_ms": 309600,
+      "run_status": "error",
+      "error": "Container exited with code 1: esult #1: subtype=success text=Request timed out\n[agent-runner] Close sentinel detected during query, ending stream\n[agent-runner] Agent error: Claude Code returned an error result: Request timed out\n"
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-04-01T17:01:03.224Z",
+      "duration_ms": 40056,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710690022-ol99sq",
+      "prompt": "You are Clutch, running a quarterly access review. Audit the following:\n\n1. SSH access to Surface Book: ssh -o ConnectTimeout=5 garrett@192.168.1.235 \"echo 'SSH OK'\" \u2014 verify it still works\n2. Check memU sidecar: curl -s http://host.docker.internal:8100/health\n3. Check MEMU_API_KEY is set and working: curl -s -X POST http://host.docker.internal:8100/retrieve -H \"X-API-Key: $MEMU_API_KEY\" -H \"Content-Type: application/json\" -d '{\"query\": \"test\"}'\n4. List scheduled tasks and check for anything stale or broken: use list_tasks\n5. Review workspace mounts: ls /workspace/extra/ \u2014 confirm consulting, bitkoinonia, personal, gear are all accessible\n6. Check Gear's OpenClaw gateway status: ssh garrett@192.168.1.235 \"ps aux | grep openclaw | grep -v grep\"\n7. Check disk usage: df -h /workspace\n\nSend a full audit report with status of each item. Flag anything that needs Garrett's attention.",
+      "schedule_value": "0 10 1 1,4,7,10 *",
+      "status": "active",
+      "run_at": "2026-04-01T15:01:00.781Z",
+      "duration_ms": 17047,
+      "run_status": "error",
+      "error": "Container exited with code 1: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"OAuth token has expired. Please obtain a new token or refresh your existing token.\"},\"request_id\":\"req_011CZdFYiayshAEopZ6w7VBv\"}\n"
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-04-01T13:00:58.596Z",
+      "duration_ms": 15018,
+      "run_status": "error",
+      "error": "Container exited with code 1: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"OAuth token has expired. Please obtain a new token or refresh your existing token.\"},\"request_id\":\"req_011CZd6Pp7pGCyez8tDmr7nM\"}\n"
+    },
+    {
+      "id": "task-1774715279316-xbx8gp",
+      "prompt": "You are Clutch, delivering the daily BrightWire morning briefing.\n\nYou will receive pre-check data with two sections: Mattermost channel activity (last 24 hours) and Gmail inbox (new/unread emails for garrett@brightwire.ai).\n\n**Part 1 \u2014 Mattermost Digest:**\nFor each channel with activity:\n\u2022 What was discussed (key topics, decisions, questions)\n\u2022 Who was involved\n\u2022 Any action items or things needing follow-up\nSkip channels with no activity.\n\n**Part 2 \u2014 Gmail Inbox Triage:**\nCategorize emails by priority:\n\u2022 \ud83d\udd34 *Urgent* \u2014 needs response today (client requests, time-sensitive, Casey)\n\u2022 \ud83d\udfe1 *Follow-up* \u2014 needs attention this week (proposals, reviews, scheduling)\n\u2022 \u26aa *FYI* \u2014 informational only (notifications, alerts, newsletters)\n\nFor each email: sender, subject, one-line summary, and recommended action.\n\n**Format for Telegram:**\n\u2022 Start with a one-line overview of total Mattermost + email activity\n\u2022 Use *bold* for channel names, sender names, and key items\n\u2022 Use \u2022 for bullet points\n\u2022 Keep the whole briefing readable in under 90 seconds\n\u2022 End with \"Top 3 priorities for today\" based on everything above",
+      "schedule_value": "0 6 * * *",
+      "status": "active",
+      "run_at": "2026-04-01T11:00:45.162Z",
+      "duration_ms": 1750,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-04-01T01:01:13.271Z",
+      "duration_ms": 30524,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-31T21:01:21.083Z",
+      "duration_ms": 38635,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-31T19:40:38.988Z",
+      "duration_ms": 33117,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774715279316-xbx8gp",
+      "prompt": "You are Clutch, delivering the daily BrightWire morning briefing.\n\nYou will receive pre-check data with two sections: Mattermost channel activity (last 24 hours) and Gmail inbox (new/unread emails for garrett@brightwire.ai).\n\n**Part 1 \u2014 Mattermost Digest:**\nFor each channel with activity:\n\u2022 What was discussed (key topics, decisions, questions)\n\u2022 Who was involved\n\u2022 Any action items or things needing follow-up\nSkip channels with no activity.\n\n**Part 2 \u2014 Gmail Inbox Triage:**\nCategorize emails by priority:\n\u2022 \ud83d\udd34 *Urgent* \u2014 needs response today (client requests, time-sensitive, Casey)\n\u2022 \ud83d\udfe1 *Follow-up* \u2014 needs attention this week (proposals, reviews, scheduling)\n\u2022 \u26aa *FYI* \u2014 informational only (notifications, alerts, newsletters)\n\nFor each email: sender, subject, one-line summary, and recommended action.\n\n**Format for Telegram:**\n\u2022 Start with a one-line overview of total Mattermost + email activity\n\u2022 Use *bold* for channel names, sender names, and key items\n\u2022 Use \u2022 for bullet points\n\u2022 Keep the whole briefing readable in under 90 seconds\n\u2022 End with \"Top 3 priorities for today\" based on everything above",
+      "schedule_value": "0 6 * * *",
+      "status": "active",
+      "run_at": "2026-03-31T19:40:05.863Z",
+      "duration_ms": 23514,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-31T01:01:29.916Z",
+      "duration_ms": 32042,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-30T21:01:38.559Z",
+      "duration_ms": 40999,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710651043-huiz4r",
+      "prompt": "You are Clutch, running weekly memory curation. Do the following:\n\n1. Read all files in /workspace/group/ that were modified in the last 7 days: find /workspace/group/ -mtime -7 -type f\n2. Review the content for important facts, decisions, or context worth persisting long-term\n3. Promote key items to the memU knowledge graph: curl -s -X POST http://host.docker.internal:8100/memorize -H \"X-API-Key: $MEMU_API_KEY\" -H \"Content-Type: application/json\" -d '{\"content\": \"...\", \"agent_source\": \"nanoclaw\"}'\n4. Check existing memories for stale or outdated info: curl -s -X POST http://host.docker.internal:8100/retrieve -H \"X-API-Key: $MEMU_API_KEY\" -H \"Content-Type: application/json\" -d '{\"query\": \"...\"}'\n5. Clean up any temporary files in the workspace that are no longer needed\n6. Check /workspace/extra/gear/ for any new context from Gear worth noting\n\nSend a brief summary of what was curated, promoted, or cleaned up. If nothing needed attention, just say \"Memory curation: nothing new this week.\" Keep it short.",
+      "schedule_value": "0 8 * * 0",
+      "status": "active",
+      "run_at": "2026-03-30T18:53:43.116Z",
+      "duration_ms": 14501,
+      "run_status": "error",
+      "error": "Container exited with code 1: rror result: Failed to authenticate. API Error: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"Invalid authentication credentials\"},\"request_id\":\"req_011CZZmgAwfygKw7BxSu9tVJ\"}\n"
+    },
+    {
+      "id": "task-1774715279316-xbx8gp",
+      "prompt": "You are Clutch, delivering the daily BrightWire morning briefing.\n\nYou will receive pre-check data with two sections: Mattermost channel activity (last 24 hours) and Gmail inbox (new/unread emails for garrett@brightwire.ai).\n\n**Part 1 \u2014 Mattermost Digest:**\nFor each channel with activity:\n\u2022 What was discussed (key topics, decisions, questions)\n\u2022 Who was involved\n\u2022 Any action items or things needing follow-up\nSkip channels with no activity.\n\n**Part 2 \u2014 Gmail Inbox Triage:**\nCategorize emails by priority:\n\u2022 \ud83d\udd34 *Urgent* \u2014 needs response today (client requests, time-sensitive, Casey)\n\u2022 \ud83d\udfe1 *Follow-up* \u2014 needs attention this week (proposals, reviews, scheduling)\n\u2022 \u26aa *FYI* \u2014 informational only (notifications, alerts, newsletters)\n\nFor each email: sender, subject, one-line summary, and recommended action.\n\n**Format for Telegram:**\n\u2022 Start with a one-line overview of total Mattermost + email activity\n\u2022 Use *bold* for channel names, sender names, and key items\n\u2022 Use \u2022 for bullet points\n\u2022 Keep the whole briefing readable in under 90 seconds\n\u2022 End with \"Top 3 priorities for today\" based on everything above",
+      "schedule_value": "0 6 * * *",
+      "status": "active",
+      "run_at": "2026-03-30T18:53:28.610Z",
+      "duration_ms": 1823,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-30T18:53:26.776Z",
+      "duration_ms": 31997,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface Book (ssh garrett@192.168.1.235) to check if Gear's OpenClaw gateway is running: ps aux | grep openclaw | grep -v grep\n3. Check for any active relay processes: cat /workspace/group/relay-start-trigger.txt 2>/dev/null\n4. Check scheduled tasks: use list_tasks to see if anything is stuck or failed\n5. Check memU health: curl -s http://host.docker.internal:8100/health\n\nOnly send a message if something needs attention \u2014 a service is down, a relay is stuck, something looks off. If everything is nominal, wrap your output in <internal> tags so nothing is sent. Keep any report brief and actionable.",
+      "schedule_value": "0 8,12,16,20 * * *",
+      "status": "active",
+      "run_at": "2026-03-28T17:01:07.860Z",
+      "duration_ms": 31397,
+      "run_status": "success",
+      "error": null
+    },
+    {
+      "id": "task-1775073972715-midday",
+      "prompt": "You are Clutch, delivering the midday BrightWire check-in.\n\nYou will receive pre-check data with Mattermost activity (last 6 hours) and Gmail inbox (new emails in last 6 hours).\n\nThis is a lighter, faster update than the morning briefing. Focus on:\n\n**Mattermost:** Only mention channels with new activity since morning. One line per channel max.\n\n**Gmail Inbox Triage:**\n\u2022 \ud83d\udd34 *Urgent* \u2014 needs response today\n\u2022 \ud83d\udfe1 *Follow-up* \u2014 needs attention this week\n\u2022 \u26aa *FYI* \u2014 skip these unless pattern is notable\n\n**Format for Telegram:**\n\u2022 Keep it under 30 seconds to read\n\u2022 Lead with anything urgent, then the rest\n\u2022 End with \"Afternoon priorities\" \u2014 max 3 items based on morning + midday activity\n\u2022 If nothing notable happened, just say \"All clear \u2014 no changes since this morning.\" and wrap in <internal> tags so nothing is sent",
+      "schedule_value": "0 12 * * *",
+      "status": "active",
+      "run_at": null,
+      "duration_ms": null,
+      "run_status": null,
+      "error": null
+    }
+  ],
+  "existing_skills": []
+}

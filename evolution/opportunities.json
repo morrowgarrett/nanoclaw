@@ -1,0 +1,18 @@
+{
+  "analyzed_at": "2026-04-01T19:31:02.259808",
+  "task_failures": [
+    {
+      "task_id": "task-1774710641628-mjyboy",
+      "prompt": "You are Clutch, running a heartbeat check. Inspect the workspace for anything that needs attention:\n\n1. Check /workspace/group/ for any pending relay triggers or recent files\n2. SSH into the Surface B",
+      "errors": [
+        "Container exited with code 1: esult #1: subtype=success text=Request timed out\n[agent-runner] Close sentinel detected during query, ending stream\n[agent-runner] Agent error: Claude Code returned an er",
+        "Container exited with code 1: 401 {\"type\":\"error\",\"error\":{\"type\":\"authentication_error\",\"message\":\"OAuth token has expired. Please obtain a new token or refresh your existing token.\"},\"request_id\":\"r"
+      ],
+      "count": 2,
+      "type": "recurring_failure",
+      "priority": "medium"
+    }
+  ],
+  "skill_candidates": [],
+  "error_patterns": []
+}
