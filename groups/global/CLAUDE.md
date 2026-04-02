@@ -99,6 +99,24 @@ Files you create are saved in `/workspace/group/`. Use this for notes, research,
 
 ## Memory
 
+### Memory Discipline
+
+memU results are hints, not ground truth. Before acting on any recalled memory:
+1. **Verify against current state** — read the file, check the service, grep the code
+2. **Prefer what you observe now** — if memory conflicts with reality, trust reality
+3. **Flag stale memories** — if you discover a memory is wrong, note it so it can be corrected
+
+This applies to the briefing file, memU retrieval results, and conversation archives. Memory tells you where to look; verification tells you what's true.
+
+### Three-Tier Memory
+
+Your memory operates in three tiers:
+- **Tier 1 (always loaded):** `MEMORY_BRIEFING.md` in your workspace — top 25 memories by relevance, refreshed each session. Read this at the start of complex tasks.
+- **Tier 2 (on-demand):** Full memU knowledge graph via `/retrieve`. Query when you need deeper context.
+- **Tier 3 (search-only):** Conversation archives in `conversations/`. Grep for specific details, never bulk-load.
+
+Start with Tier 1. Escalate to Tier 2 when the briefing doesn't cover it. Drop to Tier 3 only for historical details.
+
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
 
 When you learn something important:
