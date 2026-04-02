@@ -655,6 +655,82 @@ server.tool(
   },
 );
 
+// --- #14: Context Recall (FTS5 search) ---
+server.tool(
+  'recall',
+  'Search past conversations for keywords or topics. Returns matching messages from history.',
+  {
+    query: z.string().describe('Search query — keywords, names, topics'),
+    limit: z.number().optional().describe('Max results (default 10)'),
+  },
+  async (args) => {
+    try {
+      const dbPath = '/workspace/project/store/messages.db';
+      if (!fs.existsSync(dbPath)) {
+        return { content: [{ type: 'text' as const, text: 'Message database not available.' }] };
+      }
+      const maxResults = args.limit || 10;
+      const safeQuery = args.query.replace(/'/g, "''");
+      const result = execSync(
+        `sqlite3 "${dbPath}" "SELECT sender_name, content, timestamp FROM messages_fts WHERE messages_fts MATCH '${safeQuery}' ORDER BY rank LIMIT ${maxResults};" 2>/dev/null`,
+        { encoding: 'utf-8', timeout: 5000 },
+      ).trim();
+      if (!result) {
+        return { content: [{ type: 'text' as const, text: `No results for "${args.query}".` }] };
+      }
+      const formatted = result.split('\n').map(line => {
+        const [sender, content, time] = line.split('|');
+        return `[${time || '?'}] ${sender || '?'}: ${content || ''}`;
+      }).join('\n');
+      return { content: [{ type: 'text' as const, text: `Found ${result.split('\n').length} result(s):\n\n${formatted}` }] };
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: `Search failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+// --- #13: Peer Communication (Clutch → Gear via SSH) ---
+server.tool(
+  'peer_send',
+  'Send a message to Gear (OpenClaw on Surface Book) for cross-agent coordination.',
+  { message: z.string().describe('Message to send to Gear') },
+  async (args) => {
+    try {
+      const timestamp = Date.now();
+      const filename = `clutch-${timestamp}.json`;
+      const payload = JSON.stringify({
+        from: 'clutch', message: args.message, timestamp: new Date().toISOString(),
+      });
+      execSync(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no garrett@192.168.1.235 ` +
+          `"mkdir -p ~/.openclaw/workspace/inbox && cat > ~/.openclaw/workspace/inbox/${filename}" << 'EOFMSG'\n${payload}\nEOFMSG`,
+        { timeout: 10000 },
+      );
+      return { content: [{ type: 'text' as const, text: `Message sent to Gear (${filename}).` }] };
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: `Failed: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  'peer_status',
+  'Check if Gear (OpenClaw on Surface Book) is online.',
+  {},
+  async () => {
+    try {
+      const output = execSync(
+        `ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no garrett@192.168.1.235 ` +
+          `"systemctl --user status openclaw-gateway 2>&1 | head -5; echo '---'; uptime"`,
+        { encoding: 'utf-8', timeout: 10000 },
+      );
+      return { content: [{ type: 'text' as const, text: `Gear status:\n${output}` }] };
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: `Cannot reach Gear: ${err instanceof Error ? err.message : String(err)}` }], isError: true };
+    }
+  },
+);
+
 // Start the stdio transport
 const transport = new StdioServerTransport();
 await server.connect(transport);

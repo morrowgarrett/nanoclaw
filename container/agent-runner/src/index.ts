@@ -16,7 +16,16 @@
 
 import fs from 'fs';
 import path from 'path';
-import { execFile } from 'child_process';
+import { execFile, execSync } from 'child_process';
+
+/** Safe execSync wrapper — returns output or empty string on failure. */
+function execSyncSafe(cmd: string, timeoutMs = 8000): string {
+  try {
+    return execSync(cmd, { encoding: 'utf-8', timeout: timeoutMs }).trim();
+  } catch {
+    return '';
+  }
+}
 import {
   query,
   HookCallback,
@@ -63,6 +72,7 @@ interface SDKUserMessage {
 const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
 const IPC_POLL_MS = 500;
+const QUERY_IDLE_TIMEOUT_MS = parseInt(process.env.QUERY_IDLE_TIMEOUT || '300000', 10);
 
 /**
  * Push-based async iterable for streaming user messages to the SDK.
@@ -197,6 +207,17 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       fs.writeFileSync(filePath, markdown);
 
       log(`Archived conversation to ${filePath}`);
+
+      // #12: Write structured compaction summary for session continuity
+      const summaryPath = '/workspace/group/last-compaction-summary.md';
+      fs.writeFileSync(
+        summaryPath,
+        `# Compaction Summary — ${date}\n\n` +
+          `**Session:** ${sessionId || 'unknown'}\n` +
+          `**Messages:** ${messages.length}\n` +
+          (summary ? `**Topic:** ${summary}\n` : '') +
+          `\nSee archived conversation: \`${filePath}\`\n`,
+      );
     } catch (err) {
       log(
         `Failed to archive transcript: ${err instanceof Error ? err.message : String(err)}`,
@@ -382,9 +403,21 @@ async function runQuery(
   newSessionId?: string;
   lastAssistantUuid?: string;
   closedDuringQuery: boolean;
+  aborted: boolean;
 }> {
   const stream = new MessageStream();
   stream.push(prompt);
+
+  // #1: Abort query if no SDK messages for QUERY_IDLE_TIMEOUT_MS
+  const abortController = new AbortController();
+  let aborted = false;
+  const startIdleTimer = () =>
+    setTimeout(() => {
+      log(`No SDK messages for ${QUERY_IDLE_TIMEOUT_MS}ms, aborting query`);
+      aborted = true;
+      abortController.abort();
+    }, QUERY_IDLE_TIMEOUT_MS);
+  let idleTimer = startIdleTimer();
 
   // Poll IPC for follow-up messages and _close sentinel during the query
   let ipcPolling = true;
@@ -418,6 +451,67 @@ async function runQuery(
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
   }
+
+  // #6: Frozen memory snapshot from memU (query once, inject into prompt)
+  let memorySnapshot = '';
+  const memuUrl = process.env.MEMU_SIDECAR_URL;
+  const memuKey = process.env.MEMU_API_KEY;
+  if (memuUrl && memuKey) {
+    try {
+      const query = containerInput.prompt.slice(0, 200).replace(/'/g, '');
+      const resp = execSyncSafe(
+        `curl -s --connect-timeout 3 --max-time 5 -X POST "${memuUrl}/retrieve" ` +
+          `-H "X-API-Key: ${memuKey}" -H "Content-Type: application/json" ` +
+          `-d '${JSON.stringify({ query, top_k: 5 })}'`,
+      );
+      if (resp) {
+        const memories = JSON.parse(resp);
+        const items = memories.items || memories;
+        if (Array.isArray(items) && items.length > 0) {
+          memorySnapshot = '\n\n## Recalled Memories\n' +
+            items.map((m: { content?: string; summary?: string }) =>
+              `- ${(m.content || m.summary || '').slice(0, 500)}`
+            ).join('\n');
+          log(`Loaded ${items.length} memories from memU`);
+        }
+      }
+    } catch { /* memU unavailable */ }
+  }
+
+  // #11: Load learned skills from /workspace/group/skills/
+  let skillsContent = '';
+  const skillsDir = '/workspace/group/skills';
+  try {
+    if (fs.existsSync(skillsDir)) {
+      const files = fs.readdirSync(skillsDir).filter(f => f.endsWith('.md'));
+      if (files.length > 0) {
+        const skills = files.map(f => {
+          try { return fs.readFileSync(path.join(skillsDir, f), 'utf-8'); }
+          catch { return ''; }
+        }).filter(Boolean);
+        if (skills.length > 0) {
+          skillsContent = '\n\n## Learned Skills\n\n' + skills.join('\n\n---\n\n');
+          log(`Loaded ${skills.length} skill(s)`);
+        }
+      }
+    }
+  } catch { /* no skills dir */ }
+
+  if (memorySnapshot || skillsContent) {
+    globalClaudeMd = (globalClaudeMd || '') + memorySnapshot + skillsContent;
+  }
+
+  // #3: Load per-group MCP servers from .mcp.json
+  let groupMcpServers: Record<string, unknown> = {};
+  try {
+    const mcpPath = '/workspace/group/.mcp.json';
+    if (fs.existsSync(mcpPath)) {
+      const parsed = JSON.parse(fs.readFileSync(mcpPath, 'utf-8'));
+      groupMcpServers = parsed.mcpServers || {};
+      const count = Object.keys(groupMcpServers).length;
+      if (count > 0) log(`Loaded ${count} MCP server(s) from .mcp.json`);
+    }
+  } catch { /* no .mcp.json */ }
 
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
@@ -471,7 +565,8 @@ async function runQuery(
         'mcp__nanoclaw__*',
         'mcp__ollama__*',
         'mcp__parallel-search__*',
-        'mcp__parallel-task__*'
+        'mcp__parallel-task__*',
+        ...Object.keys(groupMcpServers).map(name => `mcp__${name}__*`),
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -499,14 +594,18 @@ async function runQuery(
             headers: { 'Authorization': `Bearer ${process.env.PARALLEL_API_KEY}` },
           },
         } : {}),
+        ...groupMcpServers,
       },
       hooks: {
         PreCompact: [
           { hooks: [createPreCompactHook(containerInput.assistantName)] },
         ],
       },
+      abortController,
     },
   })) {
+    clearTimeout(idleTimer);
+    idleTimer = startIdleTimer();
     messageCount++;
     const msgType =
       message.type === 'system'
@@ -552,11 +651,12 @@ async function runQuery(
     }
   }
 
+  clearTimeout(idleTimer);
   ipcPolling = false;
   log(
-    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}`,
+    `Query done. Messages: ${messageCount}, results: ${resultCount}, lastAssistantUuid: ${lastAssistantUuid || 'none'}, closedDuringQuery: ${closedDuringQuery}, aborted: ${aborted}`,
   );
-  return { newSessionId, lastAssistantUuid, closedDuringQuery };
+  return { newSessionId, lastAssistantUuid, closedDuringQuery, aborted };
 }
 
 interface ScriptResult {
@@ -815,6 +915,17 @@ async function main(): Promise<void> {
       if (queryResult.closedDuringQuery) {
         log('Close sentinel consumed during query, exiting');
         break;
+      }
+
+      // #1: Query aborted due to idle timeout — exit so host can retry
+      if (queryResult.aborted) {
+        writeOutput({
+          status: 'error',
+          result: null,
+          newSessionId: sessionId,
+          error: 'Query idle timeout',
+        });
+        process.exit(1);
       }
 
       // Emit session update so host can track it
