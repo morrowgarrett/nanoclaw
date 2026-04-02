@@ -208,6 +208,36 @@ function createPreCompactHook(assistantName?: string): HookCallback {
 
       log(`Archived conversation to ${filePath}`);
 
+      // Push session context to memU before compaction
+      const memuUrl = process.env.MEMU_SIDECAR_URL;
+      const memuKey = process.env.MEMU_API_KEY;
+      if (memuUrl && memuKey && messages.length > 0) {
+        try {
+          const topic = messages.find(m => m.role === 'user')?.content.slice(0, 200) || 'unknown';
+          const recentMessages = messages.slice(-6);
+          const contextSummary = [
+            `Session topic: ${topic}`,
+            `Messages exchanged: ${messages.length}`,
+            summary ? `Summary: ${summary}` : '',
+            `Recent context: ${recentMessages.map(m => `${m.role}: ${m.content.slice(0, 100)}`).join(' | ')}`,
+          ].filter(Boolean).join('. ');
+
+          execSyncSafe(
+            `curl -s --connect-timeout 3 --max-time 5 -X POST "${memuUrl}/memorize" ` +
+              `-H "X-API-Key: ${memuKey}" -H "Content-Type: application/json" ` +
+              `-d ${JSON.stringify(JSON.stringify({
+                content: `Pre-compaction snapshot (${date}): ${contextSummary}`,
+                agent_source: 'nanoclaw',
+                confidence: 0.6,
+                memory_class: 'context',
+              }))}`,
+          );
+          log('Pushed pre-compaction context to memU');
+        } catch {
+          log('Failed to push pre-compaction context to memU');
+        }
+      }
+
       // #12: Write structured compaction summary for session continuity
       const summaryPath = '/workspace/group/last-compaction-summary.md';
       fs.writeFileSync(
@@ -225,6 +255,39 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     }
 
     return {};
+  };
+}
+
+/**
+ * Detect premature completion claims and inject a verification prompt.
+ * Inspired by Claude Code's "Ralph" persistent verification pattern.
+ */
+function createVerificationHook(): (response: string) => string | null {
+  const COMPLETION_PATTERNS = [
+    /\b(?:done|finished|complete[d]?|implemented|all set|that'?s it)\b/i,
+    /\b(?:everything is|changes are|updates are|fix is)[\s\w]*(?:done|complete|in place|ready)\b/i,
+  ];
+
+  let verificationRequested = false;
+
+  return (response: string) => {
+    // Only trigger once per session to avoid loops
+    if (verificationRequested) return null;
+
+    // Check if the response contains completion language
+    const hasCompletion = COMPLETION_PATTERNS.some(p => p.test(response));
+    if (!hasCompletion) return null;
+
+    // Check if the response also contains verification evidence
+    const hasEvidence = /(?:PASS|FAIL|✓|✗|exit code|output:|result:|\$ |```)/i.test(response);
+    if (hasEvidence) return null;
+
+    verificationRequested = true;
+    return (
+      '\n\n<system-reminder>VERIFICATION REQUIRED: You claimed this work is complete. ' +
+      'Before finishing, verify by running the relevant command, test, or check. ' +
+      'Show the actual output. Do not claim completion without evidence.</system-reminder>'
+    );
   };
 }
 
@@ -529,6 +592,8 @@ async function runQuery(
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
 
+  const verifyHook = createVerificationHook();
+
   for await (const message of query({
     prompt: stream,
     options: {
@@ -648,6 +713,17 @@ async function runQuery(
         result: textResult || null,
         newSessionId,
       });
+    }
+
+    if (message.type === 'assistant' && 'message' in message) {
+      const msg = message as { message?: { content?: Array<{ type: string; text?: string }> } };
+      const textParts = msg.message?.content?.filter(c => c.type === 'text').map(c => c.text || '') || [];
+      const fullText = textParts.join('');
+      const verification = verifyHook(fullText);
+      if (verification && !closedDuringQuery) {
+        log('Verification hook triggered — injecting verification prompt');
+        stream.push(verification);
+      }
     }
   }
 
